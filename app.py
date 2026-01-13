@@ -386,8 +386,8 @@ if not st.session_state.logged_in:
         if st.button("Giriş"):
             # Secrets üzerinden şifre kontrolü
             auth_secrets = st.secrets.get("auth", {})
-            valid_user = auth_secrets.get("username", "admin")
-            valid_pass = auth_secrets.get("password", "1234")
+            valid_user = auth_secrets.get("username", "mudur")
+            valid_pass = auth_secrets.get("password", "mudur767442")
 
             if username == valid_user and password == valid_pass:
                 st.session_state.logged_in = True
