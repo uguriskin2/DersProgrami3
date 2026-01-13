@@ -104,7 +104,8 @@ def save_data():
         "lesson_config": st.session_state.get('lesson_config', {}),
         "simultaneous_lessons": st.session_state.get('simultaneous_lessons', {}),
         "report_config": st.session_state.get('report_config', {}),
-        "email_config": st.session_state.get('email_config', {})
+        "email_config": st.session_state.get('email_config', {}),
+        "last_schedule": st.session_state.get('last_schedule', [])
     }
     
     # 1. JSON Yedeği Oluştur (İsteğe bağlı ama önerilir)
@@ -572,6 +573,8 @@ if 'email_config' not in st.session_state:
         "email_subject": "Haftalık Ders Programı",
         "email_body": "Sayın {name},\n\nYeni haftalık ders programınız ektedir.\n\nİyi çalışmalar dileriz."
     })
+if 'last_schedule' not in st.session_state:
+    st.session_state.last_schedule = saved_data.get('last_schedule', [])
 
 # --- Yan Menü ---
 st.sidebar.title("Yönetim Paneli")
@@ -1429,6 +1432,7 @@ elif menu == "Program Oluştur":
             )
         if schedule:
             st.session_state.last_schedule = schedule
+            save_data()
             st.success(msg)
             
             # Eksik Ders Kontrolü (Yerleştirilemeyenler)
