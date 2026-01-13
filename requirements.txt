@@ -1,0 +1,6 @@
+streamlit
+pandas
+ortools
+altair
+fpdf
+openpyxl
