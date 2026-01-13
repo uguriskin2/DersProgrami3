@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 
-def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None):
+def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, duty_day_reduction=2):
     """
     mode: "class" (Sınıf bazlı dağıtım) veya "room" (Derslik bazlı dağıtım)
     """
@@ -424,7 +424,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
         
         if duty_vars:
             limit = teacher_max_hours.get(t_name, 8)
-            reduced_limit = max(4, limit - 2)
+            # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
+            reduced_limit = max(0, limit - duty_day_reduction)
             model.Add(sum(duty_vars) <= reduced_limit)
 
     # 14. ÖĞRETMEN SABAH/ÖĞLE TERCİHİ (SABAHÇI / ÖĞLENCİ)

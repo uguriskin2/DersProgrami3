@@ -11,6 +11,7 @@ import ssl
 import time
 import hmac
 import urllib.parse
+import random
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -641,10 +642,10 @@ if menu == "Tanımlamalar":
             selected_room = st.selectbox("Derslik Seçiniz", st.session_state.rooms, key="room_select_detail")
             
             # Mevcut değerleri al
-            curr_branches = st.session_state.room_branches.get(selected_room, [])
-            curr_teachers = st.session_state.room_teachers.get(selected_room, [])
-            curr_courses = st.session_state.room_courses.get(selected_room, [])
-            curr_excluded = st.session_state.room_excluded_courses.get(selected_room, [])
+            curr_branches = st.session_state.room_branches.get(selected_room) or []
+            curr_teachers = st.session_state.room_teachers.get(selected_room) or []
+            curr_courses = st.session_state.room_courses.get(selected_room) or []
+            curr_excluded = st.session_state.room_excluded_courses.get(selected_room) or []
             
             # Seçenekler
             opt_branches = st.session_state.branches
@@ -774,6 +775,59 @@ if menu == "Tanımlamalar":
                     save_data()
                     st.success("Kısıtlamalar kaydedildi!")
                     st.rerun()
+
+        # --- Otomatik Nöbet Atama ---
+        st.divider()
+        st.subheader("Otomatik Nöbet Atama")
+        st.info("Öğretmenlerin izinli olduğu günleri dikkate alarak, nöbet günlerini haftaya dengeli bir şekilde dağıtır.")
+        
+        col_duty1, col_duty2 = st.columns([3, 1])
+        keep_existing = col_duty1.checkbox("Mevcut nöbet atamalarını koru (Sadece boş olanlara ata)", value=False)
+        
+        if col_duty2.button("Nöbetleri Dağıt", key="btn_auto_duty"):
+            days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+            day_counts = {d: 0 for d in days}
+            
+            # Mevcut dolulukları hesapla (Eğer koruma açıksa)
+            if keep_existing:
+                for t in st.session_state.teachers:
+                    d = t.get('duty_day')
+                    if d in days:
+                        day_counts[d] += 1
+            
+            # İşlenecek öğretmenleri belirle
+            teachers_to_process = []
+            for t in st.session_state.teachers:
+                if keep_existing and t.get('duty_day') in days:
+                    continue
+                teachers_to_process.append(t)
+            
+            # Karıştır (Adil dağılım için)
+            random.shuffle(teachers_to_process)
+            
+            assigned_count = 0
+            for t in teachers_to_process:
+                unavailable = t.get('unavailable_days', []) or []
+                valid_days = [d for d in days if d not in unavailable]
+                
+                if valid_days:
+                    # En az yoğun olan günlerden rastgele birini seç
+                    # (valid_days içindeki günlerin day_counts değerlerine bak)
+                    min_count = min(day_counts[d] for d in valid_days)
+                    candidates = [d for d in valid_days if day_counts[d] == min_count]
+                    selected_day = random.choice(candidates)
+                    
+                    t['duty_day'] = selected_day
+                    day_counts[selected_day] += 1
+                    assigned_count += 1
+                else:
+                    if not keep_existing:
+                        t['duty_day'] = "Yok"
+            
+            save_data()
+            st.success(f"{assigned_count} öğretmene nöbet günü atandı!")
+            time.sleep(1)
+            st.rerun()
 
     with tab4: # Dersler
         st.info("Dersleri tablodan düzenleyebilirsiniz.")
@@ -1296,13 +1350,16 @@ elif menu == "Program Oluştur":
         if curr_lunch not in lunch_opts: curr_lunch = "Yok"
         new_lunch_hour = col_t6.selectbox("Öğle Arası (Hangi Ders Boş?)", lunch_opts, index=lunch_opts.index(curr_lunch))
         
+        duty_reduction = st.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
+
         st.session_state.lesson_config = {
             "start_time": new_start,
             "lesson_duration": new_ldur,
             "break_duration": new_bdur,
             "lunch_duration": new_lunch_dur,
             "num_hours": new_num_hours,
-            "lunch_break_hour": new_lunch_hour
+            "lunch_break_hour": new_lunch_hour,
+            "duty_day_reduction": duty_reduction
         }
     
     with st.expander("Rapor Ayarları (İmza ve Metinler)", expanded=False):
@@ -1363,7 +1420,8 @@ elif menu == "Program Oluştur":
                 room_courses=clean_room_courses,
                 room_excluded_courses=clean_room_excluded,
                 mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
-                simultaneous_lessons=st.session_state.simultaneous_lessons
+                simultaneous_lessons=st.session_state.simultaneous_lessons,
+                duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2)
             )
         if schedule:
             st.session_state.last_schedule = schedule
