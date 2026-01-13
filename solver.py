@@ -65,6 +65,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
             
         allowed = []
         crs_branch = get_course_prop(crs_name, 'branch')
+        clean_crs_branch = str(crs_branch).strip() if crs_branch else ""
         
         # Pass 1: Strict Check (Branch + Teacher)
         for r in candidates:
@@ -85,7 +86,6 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
             r_branches = room_branches.get(r, []) if room_branches else []
             # Veri temizliği (Boşluk hatalarını önlemek için)
             r_branches = [str(b).strip() for b in r_branches]
-            clean_crs_branch = str(crs_branch).strip() if crs_branch else ""
             
             # Eğer oda öğretmene özelse VEYA ders açıkça izin verilmişse, branş kısıtlamasını es geç
             is_teacher_room = t_name in r_teachers
