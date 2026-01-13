@@ -1538,6 +1538,26 @@ elif menu == "Program Oluştur":
         else:
             st.dataframe(df)
         
+        # --- Öğretmen Programı Görüntüleyici (Yeni Özellik) ---
+        st.divider()
+        st.subheader("🔍 Öğretmen Programı Görüntüle")
+        
+        view_t_list = [t['name'] for t in st.session_state.teachers]
+        selected_view_t = st.selectbox("Programını Görmek İstediğiniz Öğretmeni Seçin", view_t_list, key="sel_teacher_view_specific")
+        
+        if selected_view_t:
+            t_view_df = df[df["Öğretmen"] == selected_view_t].copy()
+            if not t_view_df.empty:
+                t_view_df["Hucre"] = t_view_df["Sınıf"] + " - " + t_view_df["Ders"]
+                t_view_pivot = t_view_df.pivot(index="Saat", columns="Gün", values="Hucre")
+                
+                days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                t_view_pivot = t_view_pivot.reindex(columns=days_order, index=range(1, num_hours + 1)).fillna("")
+                
+                st.dataframe(t_view_pivot, use_container_width=True)
+            else:
+                st.info(f"{selected_view_t} isimli öğretmenin programda dersi bulunmamaktadır.")
+
         # PDF İndirme Butonu
         if FPDF:
             st.divider()
