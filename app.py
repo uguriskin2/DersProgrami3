@@ -1232,14 +1232,20 @@ elif menu == "Program Oluştur":
 
     if st.button("Programı Dağıt"):
         with st.spinner("Hesaplanıyor..."):
+            # Veri temizliği: None olan listeleri boş listeye çevir (TypeError önlemek için)
+            clean_room_branches = {k: (v if v is not None else []) for k, v in st.session_state.room_branches.items()}
+            clean_room_teachers = {k: (v if v is not None else []) for k, v in st.session_state.room_teachers.items()}
+            clean_room_courses = {k: (v if v is not None else []) for k, v in st.session_state.room_courses.items()}
+            clean_room_excluded = {k: (v if v is not None else []) for k, v in st.session_state.get('room_excluded_courses', {}).items()}
+
             schedule, msg = create_timetable(
                 st.session_state.teachers, st.session_state.courses, st.session_state.classes,
                 st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
                 room_capacities=st.session_state.room_capacities,
-                room_branches=st.session_state.room_branches,
-                room_teachers=st.session_state.room_teachers,
-                room_courses=st.session_state.room_courses,
-                room_excluded_courses=st.session_state.room_excluded_courses,
+                room_branches=clean_room_branches,
+                room_teachers=clean_room_teachers,
+                room_courses=clean_room_courses,
+                room_excluded_courses=clean_room_excluded,
                 mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
                 simultaneous_lessons=st.session_state.simultaneous_lessons
             )
