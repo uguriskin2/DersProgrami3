@@ -36,8 +36,28 @@ def init_db():
     conn.close()
 
 def load_data():
-    # 1. Önce SQLite Veritabanını dene
-    if os.path.exists(DB_FILE):
+    # Dosya varlık ve zaman kontrolü
+    db_exists = os.path.exists(DB_FILE)
+    json_exists = os.path.exists(DATA_FILE)
+    
+    # Eğer JSON dosyası DB'den daha yeniyse (manuel yükleme/düzenleme) JSON'ı tercih et
+    prefer_json = False
+    if json_exists and db_exists:
+        if os.path.getmtime(DATA_FILE) > os.path.getmtime(DB_FILE):
+            prefer_json = True
+    elif json_exists and not db_exists:
+        prefer_json = True
+
+    # 1. JSON Tercih Ediliyorsa Oku
+    if prefer_json:
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass # Hata olursa DB'yi dene
+
+    # 2. SQLite Veritabanını dene
+    if db_exists:
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -56,8 +76,8 @@ def load_data():
         except Exception as e:
             st.error(f"Veritabanı okuma hatası: {e}")
     
-    # 2. Veritabanı yoksa JSON dosyasını dene (Yedek/İlk Kurulum)
-    if os.path.exists(DATA_FILE):
+    # 3. Veritabanı yoksa veya boşsa ve JSON henüz denenmediyse JSON dosyasını dene
+    if json_exists and not prefer_json:
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
