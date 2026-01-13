@@ -246,7 +246,11 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
         group_col = 'Sınıf'
         label_prefix = "Sinif: "
     else:
-        items = sorted(df['Derslik'].unique())
+        # Sadece programda dersi olanları değil, tüm tanımlı derslikleri göster
+        if 'rooms' in st.session_state and st.session_state.rooms:
+            items = sorted([str(r) for r in st.session_state.rooms])
+        else:
+            items = sorted([str(r) for r in df['Derslik'].unique() if r])
         group_col = 'Derslik'
         label_prefix = "Derslik: "
 
