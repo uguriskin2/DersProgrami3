@@ -2088,10 +2088,32 @@ elif menu == "Veri İşlemleri":
                     st.error(f"Veritabanı yüklenirken hata oluştu: {e}")
 
         st.divider()
-        st.subheader("🔄 JSON Yedeğinden Veritabanını Onar")
-        st.info("Eğer veritabanı silindiyse veya bozulduysa, sunucudaki mevcut JSON yedeğini (okul_verileri.json) kullanarak verileri kurtarabilirsiniz.")
+        st.subheader("🔄 JSON Yedeği ile Kurtarma")
+        st.info("Bilgisayarınızdaki bir JSON yedeğini yükleyebilir veya sunucuda varsa mevcut yedeği kullanabilirsiniz.")
         
-        if st.button("JSON Yedeğinden Geri Yükle", type="primary", key="btn_restore_json"):
+        # 1. Bilgisayardan Yükleme Seçeneği
+        uploaded_json = st.file_uploader("Bilgisayardan JSON Dosyası Yükle", type=["json"], key="json_restore_upload")
+        if uploaded_json:
+            if st.button("Yüklenen JSON'ı İçeri Aktar", type="primary", key="btn_apply_json_upload"):
+                try:
+                    data = json.load(uploaded_json)
+                    # Veritabanına yaz
+                    init_db()
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    for k, v in data.items():
+                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (k, json.dumps(v, ensure_ascii=False)))
+                    conn.commit()
+                    conn.close()
+                    st.success("Veriler başarıyla yüklendi! Uygulama yeniden başlatılıyor...")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Dosya okuma hatası: {e}")
+
+        st.markdown("---")
+        st.write("Sunucudaki Dosyayı Kullan:")
+        if st.button("Sunucudaki Dosyadan (okul_verileri.json) Geri Yükle", key="btn_restore_json"):
             if os.path.exists(DATA_FILE):
                 try:
                     with open(DATA_FILE, "r", encoding="utf-8") as f:
