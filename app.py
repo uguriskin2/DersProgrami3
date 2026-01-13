@@ -9,10 +9,12 @@ import io
 import smtplib
 import ssl
 import time
+import hmac
 import urllib.parse
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
+import sqlite3
 from solver import create_timetable
 
 try:
@@ -22,8 +24,39 @@ except ImportError:
 
 # --- Dosya İşlemleri ---
 DATA_FILE = "okul_verileri.json"
+DB_FILE = "okul_verileri.db"
+
+def init_db():
+    """Veritabanı tablosunu oluşturur."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Anahtar-Değer saklama yapısı (Key-Value Store)
+    c.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)')
+    conn.commit()
+    conn.close()
 
 def load_data():
+    # 1. Önce SQLite Veritabanını dene
+    if os.path.exists(DB_FILE):
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute('SELECT key, value FROM kv_store')
+            rows = c.fetchall()
+            conn.close()
+            
+            data = {}
+            for key, val in rows:
+                try:
+                    data[key] = json.loads(val)
+                except:
+                    data[key] = val
+            if data:
+                return data
+        except Exception as e:
+            st.error(f"Veritabanı okuma hatası: {e}")
+    
+    # 2. Veritabanı yoksa JSON dosyasını dene (Yedek/İlk Kurulum)
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -52,9 +85,49 @@ def save_data():
         "report_config": st.session_state.get('report_config', {}),
         "email_config": st.session_state.get('email_config', {})
     }
+    
+    # 1. JSON Yedeği Oluştur (İsteğe bağlı ama önerilir)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    st.toast("Veriler Kaydedildi!", icon="💾")
+        
+    # 2. SQLite Veritabanına Kayıt
+    try:
+        init_db() # Tablo yoksa oluştur
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        for k, v in data.items():
+            # Her bir veri parçasını (teachers, courses vb.) ayrı satır olarak kaydet
+            c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (k, json.dumps(v, ensure_ascii=False)))
+        conn.commit()
+        conn.close()
+        st.toast("Veriler Veritabanına (SQLite) Kaydedildi!", icon="💾")
+    except Exception as e:
+        st.error(f"Veritabanı kayıt hatası: {e}")
+
+def search_teacher_by_name(name_query):
+    """
+    SQLite JSON özelliklerini kullanarak veritabanından isme göre öğretmen arar.
+    """
+    if not os.path.exists(DB_FILE): return []
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        # json_each fonksiyonu JSON dizisini sanal bir tabloya dönüştürür
+        # key='teachers' olan satırdaki JSON listesini parçalar
+        query = """
+            SELECT json_each.value 
+            FROM kv_store, json_each(kv_store.value) 
+            WHERE key = 'teachers' 
+            AND json_extract(json_each.value, '$.name') LIKE ?
+        """
+        c.execute(query, (f'%{name_query}%',))
+        return [json.loads(row[0]) for row in c.fetchall()]
+    except Exception as e:
+        st.error(f"Arama hatası: {e}")
+        return []
+    finally:
+        conn.close()
 
 def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
     if not FPDF: return None
@@ -397,18 +470,26 @@ if not st.session_state.logged_in:
         password = st.text_input("Şifre", type="password")
         if st.button("Giriş"):
             # Secrets üzerinden şifre kontrolü
-            try:
-                auth_secrets = st.secrets.get("auth", {})
-            except Exception:
-                auth_secrets = {}
-            valid_user = auth_secrets.get("username", "mudur")
-            valid_pass = auth_secrets.get("password", "mudur767442")
-
-            if username == valid_user and password == valid_pass:
-                st.session_state.logged_in = True
-                st.rerun()
+            if "auth" in st.secrets:
+                valid_user = st.secrets["auth"]["username"]
+                stored_hash = st.secrets["auth"]["password_hash"]
+                
+                # Girilen şifreyi hashle
+                input_hash = hashlib.sha256(password.encode()).hexdigest()
+                
+                # Güvenli karşılaştırma (hmac ile)
+                if username == valid_user and hmac.compare_digest(input_hash, stored_hash):
+                    st.session_state.logged_in = True
+                    st.rerun()
+                else:
+                    st.error("Hatalı kullanıcı adı veya şifre")
             else:
-                st.error("Hatalı kullanıcı adı veya şifre")
+                # Secrets yapılandırılmamışsa varsayılan giriş (admin/admin)
+                if username == "admin" and password == "admin":
+                    st.session_state.logged_in = True
+                    st.rerun()
+                else:
+                    st.error("Giriş bilgileri (secrets.toml) bulunamadı! Varsayılan: admin / admin")
     st.stop()
 
 # --- Session State Başlatma ---
@@ -1856,6 +1937,19 @@ elif menu == "Veri İşlemleri":
                 pd.DataFrame(p_data).to_excel(writer, sheet_name='DersProgrami', index=False)
                 
             st.download_button(label="📥 İndir", data=output.getvalue(), file_name="okul_verileri.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        
+        st.divider()
+        st.write("Veritabanı Yedeği")
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE, "rb") as f:
+                st.download_button(
+                    label="📥 Veritabanını İndir (.db)",
+                    data=f,
+                    file_name="okul_verileri.db",
+                    mime="application/x-sqlite3"
+                )
+        else:
+            st.warning("Henüz oluşturulmuş bir veritabanı dosyası yok.")
 
     with col_ex2:
         st.subheader("Excel'den Veri Yükle")
@@ -1969,3 +2063,94 @@ elif menu == "Veri İşlemleri":
                     
                 except Exception as e:
                     st.error(f"Hata oluştu: {e}")
+
+        st.divider()
+        st.subheader("Veritabanı Yedeği Yükle (.db)")
+        st.info("Daha önce indirdiğiniz .db uzantılı veritabanı dosyasını buradan yükleyerek sistemi geri alabilirsiniz.")
+        uploaded_db = st.file_uploader("Veritabanı Dosyası Seç", type=["db", "sqlite"], key="db_uploader")
+        
+        if uploaded_db:
+            if st.button("Veritabanını Geri Yükle", type="primary"):
+                try:
+                    # Dosyayı kaydet
+                    with open(DB_FILE, "wb") as f:
+                        f.write(uploaded_db.getbuffer())
+                    
+                    # Session state'i temizle ki yeni veriler yüklensin (Login hariç)
+                    for key in list(st.session_state.keys()):
+                        if key != 'logged_in':
+                            del st.session_state[key]
+                            
+                    st.success("Veritabanı başarıyla geri yüklendi! Uygulama yeniden başlatılıyor...")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Veritabanı yüklenirken hata oluştu: {e}")
+
+        st.divider()
+        st.subheader("🔄 JSON Yedeğinden Veritabanını Onar")
+        st.info("Eğer veritabanı silindiyse veya bozulduysa, sunucudaki mevcut JSON yedeğini (okul_verileri.json) kullanarak verileri kurtarabilirsiniz.")
+        
+        if st.button("JSON Yedeğinden Geri Yükle", type="primary", key="btn_restore_json"):
+            if os.path.exists(DATA_FILE):
+                try:
+                    with open(DATA_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    
+                    # Veritabanına yaz
+                    init_db()
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    for k, v in data.items():
+                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (k, json.dumps(v, ensure_ascii=False)))
+                    conn.commit()
+                    conn.close()
+                    
+                    st.success("Veriler JSON dosyasından veritabanına başarıyla aktarıldı! Uygulama yeniden başlatılıyor...")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Kurtarma hatası: {e}")
+            else:
+                st.error("Sunucuda JSON yedek dosyası (okul_verileri.json) bulunamadı.")
+
+        st.divider()
+        st.subheader("⚠️ Veritabanını Sıfırla")
+        st.warning("Bu işlem veritabanındaki TÜM verileri (Öğretmenler, Dersler, Program vb.) kalıcı olarak silecektir!")
+        
+        if st.button("Tüm Verileri Sil ve Sıfırla", type="primary", key="btn_reset_db"):
+            try:
+                # Veritabanı ve JSON dosyalarını sil
+                if os.path.exists(DB_FILE): os.remove(DB_FILE)
+                if os.path.exists(DATA_FILE): os.remove(DATA_FILE)
+                
+                # Session state'i temizle
+                for key in list(st.session_state.keys()):
+                    if key != 'logged_in':
+                        del st.session_state[key]
+                
+                st.success("Veritabanı sıfırlandı. Uygulama yeniden başlatılıyor...")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Sıfırlama hatası: {e}")
+
+    st.divider()
+    st.subheader("🔍 Veritabanında Öğretmen Ara (SQLite)")
+    st.info("SQLite veritabanı üzerinden isme göre hızlı arama yapabilirsiniz.")
+    
+    t_search = st.text_input("Aranacak Öğretmen Adı", placeholder="Örn: Ahmet")
+    if t_search:
+        results = search_teacher_by_name(t_search)
+        if results:
+            st.success(f"{len(results)} kayıt bulundu.")
+            res_df = pd.DataFrame(results)
+            
+            # Sütunları düzenle ve Türkçeleştir
+            cols = ["name", "branch", "email", "phone", "duty_day"]
+            valid_cols = [c for c in cols if c in res_df.columns]
+            display_df = res_df[valid_cols].rename(columns={"name": "Adı Soyadı", "branch": "Branş", "email": "E-Posta", "phone": "Telefon", "duty_day": "Nöbet Günü"})
+            
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
+        else:
+            st.warning("Eşleşen kayıt bulunamadı.")
