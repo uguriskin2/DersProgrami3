@@ -872,8 +872,7 @@
             "Beden9": 1,
             "Sağlık9": 1,
             "Reh9": 1,
-            "TDB": 1,
-            "TDB (Grup B)": 1
+            "TDB": 1
         },
         "9-B": {
             "Mat9": 6,
@@ -995,8 +994,7 @@
             "Beden9": "Mustafa Beden",
             "Sağlık9": "Mustafa Beden",
             "Reh9": "Ümit KIRKPINAR",
-            "TDB": "Seda KARAMAN",
-            "TDB (Grup B)": "Okan YOLCU"
+            "TDB": "Seda KARAMAN"
         },
         "9-B": {
             "Mat9": "Muharrem ERSEN",
@@ -1110,12 +1108,7 @@
         "lunch_break_hour": "7"
     },
     "simultaneous_lessons": {
-        "9-A": [
-            [
-                "TDB",
-                "TDB (Grup B)"
-            ]
-        ]
+        "9-A": []
     },
     "report_config": {
         "principal_name": "",

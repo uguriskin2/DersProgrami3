@@ -72,6 +72,18 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
     if not os.path.exists(font_path_italic) and os.path.exists("C:\\Windows\\Fonts\\ariali.ttf"):
         font_path_italic = "C:\\Windows\\Fonts\\ariali.ttf"
     
+    def clean_text(text):
+        if font_family == 'TrArial':
+            return str(text)
+        replacements = {
+            'ğ': 'g', 'Ğ': 'G', 'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I',
+            'ç': 'c', 'Ç': 'C', 'ö': 'o', 'Ö': 'O', 'ü': 'u', 'Ü': 'U'
+        }
+        t = str(text)
+        for k, v in replacements.items():
+            t = t.replace(k, v)
+        return t
+
     class PDF(FPDF):
         def header(self):
             self.set_font(font_family, 'B', 10)
@@ -79,12 +91,12 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
             rep_conf = st.session_state.get('report_config', {})
             main_title = rep_conf.get('report_title', "")
             if main_title:
-                self.cell(0, 5, main_title, 0, 1, 'C')
+                self.cell(0, 5, clean_text(main_title), 0, 1, 'C')
             
             if report_type == "teacher": sub_title = 'Öğretmen Ders Programı'
             elif report_type == "class": sub_title = 'Sınıf Ders Programı'
             else: sub_title = 'Derslik Programı'
-            self.cell(0, 5, sub_title, 0, 1, 'C')
+            self.cell(0, 5, clean_text(sub_title), 0, 1, 'C')
             self.ln(2)
     
     pdf = PDF(orientation='P')
@@ -158,7 +170,7 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
             safe_duty = str(duty_day) if duty_day and duty_day not in [None, "Yok", ""] else "-"
             
             header_text = f"Öğretmen: {safe_name}   |   Toplam Ders Saati: {total_hours}   |   Nöbet Günü: {safe_duty}"
-            pdf.cell(0, 6, header_text, ln=True)
+            pdf.cell(0, 6, clean_text(header_text), ln=True)
         else:
             header_text = f"{label_prefix}{safe_name}"
             if report_type == "class" and 'class_teachers' in st.session_state:
@@ -167,7 +179,7 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
                     safe_ct = str(ct)
                     header_text += f" - Sınıf Öğretmeni: {safe_ct}"
             
-            pdf.cell(0, 6, header_text, ln=True)
+            pdf.cell(0, 6, clean_text(header_text), ln=True)
             
             pdf.set_font(font_family, 'B', 7)
             pdf.cell(0, 6, f"Toplam Ders Saati: {total_hours}", ln=True)
@@ -177,9 +189,9 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
         pdf.set_font(font_family, 'B', 6)
         w_hour = 26
         w_day = 32
-        pdf.cell(w_hour, 6, "Saat", 1)
+        pdf.cell(w_hour, 6, clean_text("Saat"), 1)
         for d in days:
-            pdf.cell(w_day, 6, d, 1)
+            pdf.cell(w_day, 6, clean_text(d), 1)
         pdf.ln()
         
         pdf.set_font(font_family, '', 6)
@@ -212,10 +224,10 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
             end_min = start_min + duration
             
             time_str = f"{start_min//60:02d}:{start_min%60:02d}-{end_min//60:02d}:{end_min%60:02d}"
-            pdf.cell(w_hour, 6, time_str, 1)
+            pdf.cell(w_hour, 6, clean_text(time_str), 1)
             for d in days:
                 if is_lunch:
-                    content = "ÖĞLE ARASI"
+                    content = clean_text("ÖĞLE ARASI")
                 else:
                     lesson = df[(df[group_col] == item) & (df['Gün'] == d) & (df['Saat'] == h)]
                     if not lesson.empty:
@@ -228,7 +240,7 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
                             content = f"{row['Sınıf']} - {row['Ders']} ({row['Öğretmen']})"
                     else:
                         content = "-"
-                pdf.cell(w_day, 6, content[:35], 1)
+                pdf.cell(w_day, 6, clean_text(content[:35]), 1)
             pdf.ln()
             
             # Bir sonraki dersin başlangıç saatini hesapla
@@ -240,35 +252,35 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
         if report_type == "class":
             pdf.ln(5)
             pdf.set_font(font_family, 'B', 7)
-            pdf.cell(0, 6, "Ders Listesi ve Saatleri:", ln=True)
+            pdf.cell(0, 6, clean_text("Ders Listesi ve Saatleri:"), ln=True)
             
             class_df = df[df['Sınıf'] == item]
             if not class_df.empty:
-                pdf.cell(70, 5, "Ders", 1)
-                pdf.cell(70, 5, "Öğretmen", 1)
-                pdf.cell(20, 5, "Saat", 1, 1)
+                pdf.cell(70, 5, clean_text("Ders"), 1)
+                pdf.cell(70, 5, clean_text("Öğretmen"), 1)
+                pdf.cell(20, 5, clean_text("Saat"), 1, 1)
                 
                 pdf.set_font(font_family, '', 6)
                 summary = class_df.groupby(['Ders', 'Öğretmen']).size().reset_index(name='Saat')
                 for _, row in summary.iterrows():
                     c_name = str(row['Ders'])
                     t_name = str(row['Öğretmen'])
-                    pdf.cell(70, 5, c_name[:40], 1)
-                    pdf.cell(70, 5, t_name[:40], 1)
-                    pdf.cell(20, 5, str(row['Saat']), 1, 1)
+                    pdf.cell(70, 5, clean_text(c_name[:40]), 1)
+                    pdf.cell(70, 5, clean_text(t_name[:40]), 1)
+                    pdf.cell(20, 5, clean_text(str(row['Saat'])), 1, 1)
         
         # Derslik raporu için alt kısma ders özeti ekle
         if report_type == "room":
             pdf.ln(5)
             pdf.set_font(font_family, 'B', 7)
-            pdf.cell(0, 6, "Ders Listesi ve Saatleri:", ln=True)
+            pdf.cell(0, 6, clean_text("Ders Listesi ve Saatleri:"), ln=True)
             
             room_df = df[df['Derslik'] == item]
             if not room_df.empty:
-                pdf.cell(40, 5, "Sınıf", 1)
-                pdf.cell(50, 5, "Ders", 1)
-                pdf.cell(50, 5, "Öğretmen", 1)
-                pdf.cell(20, 5, "Saat", 1, 1)
+                pdf.cell(40, 5, clean_text("Sınıf"), 1)
+                pdf.cell(50, 5, clean_text("Ders"), 1)
+                pdf.cell(50, 5, clean_text("Öğretmen"), 1)
+                pdf.cell(20, 5, clean_text("Saat"), 1, 1)
                 
                 pdf.set_font(font_family, '', 6)
                 summary = room_df.groupby(['Sınıf', 'Ders', 'Öğretmen']).size().reset_index(name='Saat')
@@ -276,17 +288,17 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
                     c_name = str(row['Sınıf'])
                     d_name = str(row['Ders'])
                     t_name = str(row['Öğretmen'])
-                    pdf.cell(40, 5, c_name[:25], 1)
-                    pdf.cell(50, 5, d_name[:30], 1)
-                    pdf.cell(50, 5, t_name[:30], 1)
-                    pdf.cell(20, 5, str(row['Saat']), 1, 1)
+                    pdf.cell(40, 5, clean_text(c_name[:25]), 1)
+                    pdf.cell(50, 5, clean_text(d_name[:30]), 1)
+                    pdf.cell(50, 5, clean_text(t_name[:30]), 1)
+                    pdf.cell(20, 5, clean_text(str(row['Saat'])), 1, 1)
         
         # Alt Bilgi Metni
         pdf.ln(3)
         pdf.set_font(font_family, 'I', 6)
         rep_conf = st.session_state.get('report_config', {})
         note_text = rep_conf.get('notification_text', "Bu Haftalık Ders Programı belirtilen tarihte tebliğ edildi.")
-        pdf.multi_cell(0, 4, note_text)
+        pdf.multi_cell(0, 4, clean_text(note_text))
         
         # Öğretmen raporu için alt kısma toplam saat ve imza bölümü ekle
         if report_type == "teacher":
@@ -297,15 +309,15 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
             
             # İmza Bölümü
             w_half = 90
-            pdf.cell(w_half, 6, "Ders Öğretmeni", 0, 0, 'C')
-            pdf.cell(w_half, 6, "Okul Müdürü", 0, 1, 'C')
+            pdf.cell(w_half, 6, clean_text("Ders Öğretmeni"), 0, 0, 'C')
+            pdf.cell(w_half, 6, clean_text("Okul Müdürü"), 0, 1, 'C')
             
             pdf.set_font(font_family, '', 7)
             safe_teacher_name = str(item)
             principal_name = rep_conf.get('principal_name', "")
             
-            pdf.cell(w_half, 6, safe_teacher_name, 0, 0, 'C')
-            pdf.cell(w_half, 6, principal_name, 0, 1, 'C')
+            pdf.cell(w_half, 6, clean_text(safe_teacher_name), 0, 0, 'C')
+            pdf.cell(w_half, 6, clean_text(principal_name), 0, 1, 'C')
             
             pdf.ln(10)
             pdf.cell(w_half, 5, ".......................", 0, 0, 'C')
@@ -385,7 +397,10 @@ if not st.session_state.logged_in:
         password = st.text_input("Şifre", type="password")
         if st.button("Giriş"):
             # Secrets üzerinden şifre kontrolü
-            auth_secrets = st.secrets.get("auth", {})
+            try:
+                auth_secrets = st.secrets.get("auth", {})
+            except Exception:
+                auth_secrets = {}
             valid_user = auth_secrets.get("username", "admin")
             valid_pass = auth_secrets.get("password", "1234")
 
