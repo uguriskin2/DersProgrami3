@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 
-def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, duty_day_reduction=2):
+def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, duty_day_reduction=2, progress_callback=None):
     """
     mode: "class" (Sınıf bazlı dağıtım) veya "room" (Derslik bazlı dağıtım)
     """
@@ -15,6 +15,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
             return default
 
     # Veri Temizliği: Oda-Öğretmen eşleşmelerindeki isimleri temizle
+    if progress_callback: progress_callback(5, "Veriler hazırlanıyor ve değişkenler oluşturuluyor...")
+    
     if room_teachers:
         room_teachers = {r: [str(t).strip() for t in ts] for r, ts in room_teachers.items()}
 
@@ -151,6 +153,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
 
     # 1. Her ders, haftada belirtilen saat kadar yapılmalı
     # Önce haftalık toplam kapasiteyi hesapla (Öğle arası varsa düş)
+    if progress_callback: progress_callback(20, "Temel ders yükü kısıtlamaları ekleniyor...")
+    
     weekly_slots = num_hours * 5
     if lunch_break_hour:
         weekly_slots -= 5
@@ -245,6 +249,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
 
     # 5. ÖĞRETMEN MÜSAİTLİK (İZİN GÜNÜ) KISITLAMASI
     # teachers listesinden izin günlerini alıyoruz
+    if progress_callback: progress_callback(40, "Öğretmen ve derslik kısıtlamaları işleniyor...")
+    
     teacher_unavailable = {str(t['name']).strip(): t.get('unavailable_days') or [] for t in teachers if t.get('name')}
     
     for t_name, bad_days in teacher_unavailable.items():
@@ -293,6 +299,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 model.Add(sum(daily_vars) <= limit)
 
     # 7. BLOK DERS KISITLAMASI (Aynı gün içindeki dersler birbirini takip etmeli)
+    if progress_callback: progress_callback(60, "Blok ders ve süreklilik kuralları uygulanıyor...")
+    
     for c_name in classes:
         if c_name not in class_lessons: continue
         for crs_name in class_lessons[c_name]:
@@ -460,6 +468,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
 
     # 15. EŞ ZAMANLI DERSLER (Sınıf Bölme)
     # Tanımlanan ders çiftlerinin aynı saatte yapılmasını zorunlu kıl
+    if progress_callback: progress_callback(80, "Özel durumlar ve optimizasyon hedefleri hazırlanıyor...")
+    
     if simultaneous_lessons:
         for c_name, pairs in simultaneous_lessons.items():
             if c_name not in class_lessons: continue
@@ -500,6 +510,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     model.Maximize(sum(lessons.values()))
 
     # --- Çözüm ---
+    if progress_callback: progress_callback(90, "Çözüm aranıyor (Bu işlem veri boyutuna göre sürebilir)...")
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
 
@@ -517,4 +528,64 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 })
         return schedule, "Çözüm Bulundu!"
     else:
-        return [], "Çözüm Bulunamadı. Kısıtlamaları gevşetin."
+        # --- Hata Analizi ve İpuçları ---
+        hints = []
+        
+        # 1. Temel Kapasite (Haftalık Ders Saati)
+        daily_slots = num_hours
+        if lunch_break_hour:
+            daily_slots -= 1
+        weekly_slots = daily_slots * 5
+        
+        # 2. Öğretmen Kapasite Kontrolü
+        for t in teachers:
+            t_name = str(t.get('name', '')).strip()
+            if not t_name: continue
+            
+            # Yükü Hesapla
+            t_load = 0
+            for c_name, courses in class_lessons.items():
+                for crs_name, count in courses.items():
+                    if assignments.get(c_name, {}).get(crs_name) == t_name:
+                        t_load += count
+            
+            if t_load == 0: continue
+            
+            # Kapasiteyi Hesapla
+            un_days = t.get('unavailable_days', []) or []
+            un_slots = t.get('unavailable_slots', []) or []
+            max_daily = safe_int(t.get('max_hours_per_day'), 8)
+            
+            # Çalışma günleri
+            working_days = 5 - len(un_days)
+            if working_days < 0: working_days = 0
+            
+            # Günlük limit kısıtlaması (Ders saati vs Max limit)
+            effective_daily = min(daily_slots, max_daily)
+            
+            # Toplam teorik kapasite
+            t_cap = working_days * effective_daily
+            
+            # Münferit saat kısıtlamalarını düş
+            valid_un_slots_count = 0
+            for s in un_slots:
+                if ":" in s:
+                    d_str, _ = s.split(":", 1)
+                    if d_str not in un_days:
+                        valid_un_slots_count += 1
+            t_cap -= valid_un_slots_count
+            
+            if t_load > t_cap:
+                hints.append(f"🔴 {t_name}: Atanan {t_load} saat > Müsaitlik {t_cap} saat")
+
+        # 3. Sınıf Yükü Kontrolü
+        for c_name, courses in class_lessons.items():
+            c_load = sum(courses.values())
+            if c_load > weekly_slots:
+                hints.append(f"🔴 Sınıf {c_name}: Ders Yükü {c_load} > Haftalık Kapasite {weekly_slots}")
+
+        msg = "Çözüm Bulunamadı. Kısıtlamaları gevşetin."
+        if hints:
+            msg += "\n\n🔍 Olası Sorunlar:\n" + "\n".join(hints)
+            
+        return [], msg

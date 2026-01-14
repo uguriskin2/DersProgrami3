@@ -109,8 +109,11 @@ def save_data():
     }
     
     # 1. JSON Yedeği Oluştur (İsteğe bağlı ama önerilir)
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.warning(f"JSON yedek dosyası oluşturulamadı: {e}")
         
     # 2. SQLite Veritabanına Kayıt
     try:
@@ -1411,25 +1414,39 @@ elif menu == "Program Oluştur":
     lunch_break_hour = int(lunch_val) if lunch_val != "Yok" else None
 
     if st.button("Programı Dağıt"):
-        with st.spinner("Hesaplanıyor..."):
-            # Veri temizliği: None olan listeleri boş listeye çevir (TypeError önlemek için)
-            clean_room_branches = {k: (v if v is not None else []) for k, v in st.session_state.room_branches.items()}
-            clean_room_teachers = {k: (v if v is not None else []) for k, v in st.session_state.room_teachers.items()}
-            clean_room_courses = {k: (v if v is not None else []) for k, v in st.session_state.room_courses.items()}
-            clean_room_excluded = {k: (v if v is not None else []) for k, v in st.session_state.get('room_excluded_courses', {}).items()}
+        st.session_state.last_schedule = [] # Yeni işlem öncesi eski sonucu temizle
+        
+        # İlerleme Çubuğu Oluştur
+        prog_bar = st.progress(0)
+        status_text = st.empty()
+        
+        def update_progress(pct, msg):
+            prog_bar.progress(pct)
+            status_text.text(msg)
 
-            schedule, msg = create_timetable(
-                st.session_state.teachers, st.session_state.courses, st.session_state.classes,
-                st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
-                room_capacities=st.session_state.room_capacities,
-                room_branches=clean_room_branches,
-                room_teachers=clean_room_teachers,
-                room_courses=clean_room_courses,
-                room_excluded_courses=clean_room_excluded,
-                mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
-                simultaneous_lessons=st.session_state.simultaneous_lessons,
-                duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2)
-            )
+        # Veri temizliği: None olan listeleri boş listeye çevir (TypeError önlemek için)
+        clean_room_branches = {k: (v if v is not None else []) for k, v in st.session_state.room_branches.items()}
+        clean_room_teachers = {k: (v if v is not None else []) for k, v in st.session_state.room_teachers.items()}
+        clean_room_courses = {k: (v if v is not None else []) for k, v in st.session_state.room_courses.items()}
+        clean_room_excluded = {k: (v if v is not None else []) for k, v in st.session_state.get('room_excluded_courses', {}).items()}
+
+        schedule, msg = create_timetable(
+            st.session_state.teachers, st.session_state.courses, st.session_state.classes,
+            st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
+            room_capacities=st.session_state.room_capacities,
+            room_branches=clean_room_branches,
+            room_teachers=clean_room_teachers,
+            room_courses=clean_room_courses,
+            room_excluded_courses=clean_room_excluded,
+            mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
+            simultaneous_lessons=st.session_state.simultaneous_lessons,
+            duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
+            progress_callback=update_progress
+        )
+        
+        prog_bar.empty()
+        status_text.empty()
+        
         if schedule:
             st.session_state.last_schedule = schedule
             save_data()
