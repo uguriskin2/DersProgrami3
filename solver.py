@@ -575,8 +575,18 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                         valid_un_slots_count += 1
             t_cap -= valid_un_slots_count
             
+            # Nöbet Günü Düşümü (Kapasiteyi etkiler)
+            duty_deduction = 0
+            d_day = t.get('duty_day')
+            if d_day and d_day not in un_days and d_day in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]:
+                duty_deduction = duty_day_reduction
+                t_cap -= duty_deduction
+
             if t_load > t_cap:
-                hints.append(f"🔴 {t_name}: Atanan {t_load} saat > Müsaitlik {t_cap} saat")
+                details = f"Gün: {working_days}, Günlük Limit: {effective_daily}"
+                if valid_un_slots_count > 0: details += f", Kısıtlı Saat: {valid_un_slots_count}"
+                if duty_deduction > 0: details += f", Nöbet Düşümü: {duty_deduction}"
+                hints.append(f"🔴 {t_name}: Atanan {t_load} saat > Müsaitlik {t_cap} saat ({details})")
 
         # 3. Sınıf Yükü Kontrolü
         for c_name, courses in class_lessons.items():
