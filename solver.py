@@ -584,15 +584,25 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
 
             if t_load > t_cap:
                 details = f"Gün: {working_days}, Günlük Limit: {effective_daily}"
+                
+                # Çözüm Önerileri Oluştur
+                suggestions = []
+                if working_days < 5: suggestions.append("İzin gününü kaldır")
+                if effective_daily < daily_slots: suggestions.append("Günlük limiti artır")
+                if duty_deduction > 0: suggestions.append("Nöbeti kaldır")
+                if valid_un_slots_count > 0: suggestions.append("Kısıtlı saatleri aç")
+                
+                suggestion_text = " | ".join(suggestions) if suggestions else "Ders yükünü azalt"
+
                 if valid_un_slots_count > 0: details += f", Kısıtlı Saat: {valid_un_slots_count}"
                 if duty_deduction > 0: details += f", Nöbet Düşümü: {duty_deduction}"
-                hints.append(f"🔴 {t_name}: Atanan {t_load} saat > Müsaitlik {t_cap} saat ({details})")
+                hints.append(f"🔴 {t_name}: Atanan {t_load} > Müsait {t_cap} ({details})\n   💡 ÖNERİ: {suggestion_text}")
 
         # 3. Sınıf Yükü Kontrolü
         for c_name, courses in class_lessons.items():
             c_load = sum(courses.values())
             if c_load > weekly_slots:
-                hints.append(f"🔴 Sınıf {c_name}: Ders Yükü {c_load} > Haftalık Kapasite {weekly_slots}")
+                hints.append(f"🔴 Sınıf {c_name}: Ders Yükü {c_load} > Haftalık Kapasite {weekly_slots}\n   💡 ÖNERİ: Ders saatlerini azaltın veya günlük ders saati sayısını artırın.")
 
         msg = "Çözüm Bulunamadı. Kısıtlamaları gevşetin."
         if hints:
