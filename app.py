@@ -24,8 +24,12 @@ except ImportError:
     FPDF = None
 
 # --- Dosya İşlemleri ---
-DATA_FILE = "okul_verileri.json"
-DB_FILE = "okul_verileri.db"
+DATA_DIR = "data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+
+DATA_FILE = os.path.join(DATA_DIR, "okul_verileri.json")
+DB_FILE = os.path.join(DATA_DIR, "okul_verileri.db")
 
 def init_db():
     """Veritabanı tablosunu oluşturur."""
@@ -33,14 +37,81 @@ def init_db():
     c = conn.cursor()
     # Anahtar-Değer saklama yapısı (Key-Value Store)
     c.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)')
+    # Okullar tablosu
+    c.execute('CREATE TABLE IF NOT EXISTS schools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, username TEXT UNIQUE, password TEXT)')
     conn.commit()
     conn.close()
 
-def load_data():
+def create_school(name, username, password):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO schools (name, username, password) VALUES (?, ?, ?)", (name, username, password))
+        conn.commit()
+        return True, "Okul başarıyla oluşturuldu."
+    except sqlite3.IntegrityError:
+        return False, "Bu kullanıcı adı zaten kullanılıyor."
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+def get_schools():
+    if not os.path.exists(DB_FILE): return []
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name, username FROM schools")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def delete_school(school_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM schools WHERE id = ?", (school_id,))
+    # Okula ait verileri de temizle
+    prefix = f"school_{school_id}_%"
+    c.execute("DELETE FROM kv_store WHERE key LIKE ?", (prefix,))
+    conn.commit()
+    conn.close()
+
+def verify_school_user(username, password):
+    if not os.path.exists(DB_FILE): return None
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id, name FROM schools WHERE username = ? AND password = ?", (username, password))
+    row = c.fetchone()
+    conn.close()
+    return row # (id, name)
+
+def load_data(school_id=None):
     # Dosya varlık ve zaman kontrolü
     db_exists = os.path.exists(DB_FILE)
     json_exists = os.path.exists(DATA_FILE)
     
+    # Çoklu Okul Modu: Sadece Veritabanından Yükle
+    if school_id:
+        data = {}
+        if db_exists:
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                prefix = f"school_{school_id}_"
+                c.execute("SELECT key, value FROM kv_store WHERE key LIKE ?", (f"{prefix}%",))
+                rows = c.fetchall()
+                conn.close()
+                
+                for key, val in rows:
+                    # Prefix'i kaldırarak dict'e ekle
+                    clean_key = key[len(prefix):]
+                    try:
+                        data[clean_key] = json.loads(val)
+                    except:
+                        data[clean_key] = val
+            except Exception as e:
+                st.error(f"Okul verisi yükleme hatası: {e}")
+        return data
+
     # Eğer JSON dosyası DB'den daha yeniyse (manuel yükleme/düzenleme) JSON'ı tercih et
     prefer_json = False
     if json_exists and db_exists:
@@ -87,6 +158,7 @@ def load_data():
     return {}
 
 def save_data():
+    school_id = st.session_state.get('school_id')
     data = {
         "branches": st.session_state.branches,
         "teachers": st.session_state.teachers,
@@ -108,21 +180,27 @@ def save_data():
         "last_schedule": st.session_state.get('last_schedule', [])
     }
     
-    # 1. JSON Yedeği Oluştur (İsteğe bağlı ama önerilir)
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        st.warning(f"JSON yedek dosyası oluşturulamadı: {e}")
+    # 1. JSON Yedeği (Sadece tekil modda veya yedekleme amaçlı)
+    if not school_id:
+        try:
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            st.warning(f"JSON yedek dosyası oluşturulamadı: {e}")
         
     # 2. SQLite Veritabanına Kayıt
     try:
         init_db() # Tablo yoksa oluştur
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
+        
+        prefix = f"school_{school_id}_" if school_id else ""
+        
         for k, v in data.items():
+            # Okul ID varsa anahtarı prefixle
+            db_key = f"{prefix}{k}"
             # Her bir veri parçasını (teachers, courses vb.) ayrı satır olarak kaydet
-            c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (k, json.dumps(v, ensure_ascii=False)))
+            c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
         conn.commit()
         conn.close()
         st.toast("Veriler Veritabanına (SQLite) Kaydedildi!", icon="💾")
@@ -470,6 +548,8 @@ st.set_page_config(page_title="Okul Ders Programı", layout="wide")
 # --- Giriş Ekranı ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'role' not in st.session_state:
+    st.session_state.role = 'viewer' # Varsayılan rol
 
 if not st.session_state.logged_in:
     # Arka plan resmi (background.jpg) varsa yükle
@@ -498,8 +578,44 @@ if not st.session_state.logged_in:
         username = st.text_input("Kullanıcı Adı")
         password = st.text_input("Şifre", type="password")
         if st.button("Giriş"):
+            init_db() # DB tablolarını garantiye al
+            
+            # 1. Süper Admin Kontrolü (Sabit veya Secrets)
+            is_super = False
+            if username == "superadmin" and password == "superpass": # Varsayılan
+                is_super = True
+            elif "super_auth" in st.secrets:
+                if username == st.secrets["super_auth"]["username"] and password == st.secrets["super_auth"]["password"]:
+                    is_super = True
+            
+            if is_super:
+                st.session_state.logged_in = True
+                st.session_state.role = "super_admin"
+                st.rerun()
+
+            # 2. Okul Yöneticisi Kontrolü (DB'den)
+            school_user = verify_school_user(username, password)
+            if school_user:
+                st.session_state.logged_in = True
+                st.session_state.role = "admin" # Okul yöneticisi kendi okulunun adminidir
+                st.session_state.school_id = school_user[0]
+                st.session_state.school_name = school_user[1]
+                st.rerun()
+
+            # Örnek Kullanıcılar (Rol Tabanlı Erişim İçin)
+            # Gerçek senaryoda bu veriler veritabanından veya secrets.toml'dan gelmelidir.
+            DEMO_USERS = {
+                "admin": {"pass": "admin", "role": "admin"},
+                "ogretmen": {"pass": "123", "role": "teacher"},
+                "misafir": {"pass": "123", "role": "viewer"}
+            }
+
             # Secrets üzerinden şifre kontrolü
-            if "auth" in st.secrets:
+            if username in DEMO_USERS and DEMO_USERS[username]["pass"] == password:
+                st.session_state.logged_in = True
+                st.session_state.role = DEMO_USERS[username]["role"]
+                st.rerun()
+            elif "auth" in st.secrets:
                 valid_user = st.secrets["auth"]["username"]
                 stored_hash = st.secrets["auth"]["password_hash"]
                 
@@ -509,6 +625,7 @@ if not st.session_state.logged_in:
                 # Güvenli karşılaştırma (hmac ile)
                 if username == valid_user and hmac.compare_digest(input_hash, stored_hash):
                     st.session_state.logged_in = True
+                    st.session_state.role = "admin"
                     st.rerun()
                 else:
                     st.error("Hatalı kullanıcı adı veya şifre")
@@ -516,13 +633,56 @@ if not st.session_state.logged_in:
                 # Secrets yapılandırılmamışsa varsayılan giriş (admin/admin)
                 if username == "admin" and password == "admin":
                     st.session_state.logged_in = True
+                    st.session_state.role = "admin"
                     st.rerun()
                 else:
                     st.error("Giriş bilgileri (secrets.toml) bulunamadı! Varsayılan: admin / admin")
     st.stop()
 
+# --- Süper Admin Paneli ---
+if st.session_state.get("role") == "super_admin":
+    st.sidebar.title("Süper Admin")
+    if st.sidebar.button("🚪 Çıkış Yap"):
+        st.session_state.logged_in = False
+        st.session_state.role = 'viewer'
+        st.rerun()
+    
+    st.title("🏫 Okul Yönetim Paneli")
+    
+    # Okul Ekleme
+    with st.form("add_school_form"):
+        st.subheader("Yeni Okul Oluştur")
+        col_s1, col_s2, col_s3 = st.columns(3)
+        new_s_name = col_s1.text_input("Okul Adı")
+        new_s_user = col_s2.text_input("Yönetici Kullanıcı Adı")
+        new_s_pass = col_s3.text_input("Şifre", type="password")
+        if st.form_submit_button("Okul Ekle"):
+            if new_s_name and new_s_user and new_s_pass:
+                success, msg = create_school(new_s_name, new_s_user, new_s_pass)
+                if success: st.success(msg)
+                else: st.error(msg)
+            else:
+                st.warning("Lütfen tüm alanları doldurun.")
+    
+    # Okul Listesi
+    st.divider()
+    st.subheader("Mevcut Okullar")
+    schools = get_schools()
+    if schools:
+        for s in schools:
+            with st.container():
+                c1, c2, c3 = st.columns([3, 2, 1])
+                c1.write(f"**{s[1]}** (ID: {s[0]})")
+                c2.write(f"Yönetici: `{s[2]}`")
+                if c3.button("Sil 🗑️", key=f"del_school_{s[0]}"):
+                    delete_school(s[0])
+                    st.rerun()
+    else:
+        st.info("Sistemde kayıtlı okul bulunmamaktadır.")
+    st.stop()
+
 # --- Session State Başlatma ---
-saved_data = load_data()
+saved_data = load_data(st.session_state.get('school_id'))
 
 if 'branches' not in st.session_state:
     st.session_state.branches = saved_data.get('branches', ["Matematik", "Fizik", "Kimya", "Biyoloji", "Edebiyat", "Tarih"])
@@ -580,15 +740,24 @@ if 'last_schedule' not in st.session_state:
     st.session_state.last_schedule = saved_data.get('last_schedule', [])
 
 # --- Yan Menü ---
-st.sidebar.title("Yönetim Paneli")
+panel_title = f"Panel ({st.session_state.get('role', 'user')})"
+if st.session_state.get('school_name'):
+    panel_title += f"\n🏫 {st.session_state.school_name}"
+
+st.sidebar.title(panel_title)
 if st.sidebar.button("🚪 Çıkış Yap"):
     st.session_state.logged_in = False
+    st.session_state.role = 'viewer'
     st.rerun()
 
-if st.sidebar.button("💾 Tüm Verileri Kaydet"):
-    save_data()
+if st.session_state.get("role") == "admin":
+    if st.sidebar.button("💾 Tüm Verileri Kaydet"):
+        save_data()
+    menu_options = ["Tanımlamalar", "Ders Atama & Kopyalama", "Program Oluştur", "Hızlı Düzenle", "Veri İşlemleri"]
+else:
+    menu_options = ["Program Oluştur"]
 
-menu = st.sidebar.radio("Menü", ["Tanımlamalar", "Ders Atama & Kopyalama", "Program Oluştur", "Hızlı Düzenle", "Veri İşlemleri"])
+menu = st.sidebar.radio("Menü", menu_options)
 
 # --- 1. TANIMLAMALAR ---
 if menu == "Tanımlamalar":
@@ -1342,70 +1511,74 @@ elif menu == "Ders Atama & Kopyalama":
 
 # --- 3. PROGRAM OLUŞTUR ---
 elif menu == "Program Oluştur":
-    st.header("Otomatik Dağıtım")
+    st.header("Ders Programı")
     
-    with st.expander("Ders Saatleri Yapılandırması", expanded=False):
-        col_t1, col_t2, col_t3, col_t4 = st.columns(4)
-        lc = st.session_state.lesson_config
-        new_start = col_t1.text_input("Başlangıç Saati", value=lc.get("start_time", "08:30"), help="Örn: 08:30")
-        new_ldur = col_t2.number_input("Ders Süresi (dk)", value=lc.get("lesson_duration", 40), min_value=10, max_value=120)
-        new_bdur = col_t3.number_input("Teneffüs (dk)", value=lc.get("break_duration", 10), min_value=0, max_value=60)
-        new_lunch_dur = col_t4.number_input("Öğle Arası (dk)", value=lc.get("lunch_duration", 50), min_value=0, max_value=120)
-        
-        col_t5, col_t6 = st.columns(2)
-        new_num_hours = col_t5.number_input("Günlük Ders Saati Sayısı", min_value=5, max_value=12, value=lc.get("num_hours", 8))
-        
-        lunch_opts = ["Yok"] + [str(i) for i in range(1, new_num_hours + 1)]
-        curr_lunch = str(lc.get("lunch_break_hour", "Yok"))
-        if curr_lunch not in lunch_opts: curr_lunch = "Yok"
-        new_lunch_hour = col_t6.selectbox("Öğle Arası (Hangi Ders Boş?)", lunch_opts, index=lunch_opts.index(curr_lunch))
-        
-        duty_reduction = st.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
+    if st.session_state.role == "admin":
+        with st.expander("Ders Saatleri Yapılandırması", expanded=False):
+            col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+            lc = st.session_state.lesson_config
+            new_start = col_t1.text_input("Başlangıç Saati", value=lc.get("start_time", "08:30"), help="Örn: 08:30")
+            new_ldur = col_t2.number_input("Ders Süresi (dk)", value=lc.get("lesson_duration", 40), min_value=10, max_value=120)
+            new_bdur = col_t3.number_input("Teneffüs (dk)", value=lc.get("break_duration", 10), min_value=0, max_value=60)
+            new_lunch_dur = col_t4.number_input("Öğle Arası (dk)", value=lc.get("lunch_duration", 50), min_value=0, max_value=120)
+            
+            col_t5, col_t6 = st.columns(2)
+            new_num_hours = col_t5.number_input("Günlük Ders Saati Sayısı", min_value=5, max_value=12, value=lc.get("num_hours", 8))
+            
+            lunch_opts = ["Yok"] + [str(i) for i in range(1, new_num_hours + 1)]
+            curr_lunch = str(lc.get("lunch_break_hour", "Yok"))
+            if curr_lunch not in lunch_opts: curr_lunch = "Yok"
+            new_lunch_hour = col_t6.selectbox("Öğle Arası (Hangi Ders Boş?)", lunch_opts, index=lunch_opts.index(curr_lunch))
+            
+            duty_reduction = st.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
 
-        st.session_state.lesson_config = {
-            "start_time": new_start,
-            "lesson_duration": new_ldur,
-            "break_duration": new_bdur,
-            "lunch_duration": new_lunch_dur,
-            "num_hours": new_num_hours,
-            "lunch_break_hour": new_lunch_hour,
-            "duty_day_reduction": duty_reduction
-        }
-    
-    with st.expander("Rapor Ayarları (İmza ve Metinler)", expanded=False):
-        rc = st.session_state.report_config
-        new_title = st.text_input("Rapor Başlığı (Okul Adı)", value=rc.get("report_title", ""), help="Raporun en üstünde görünecek başlık (Örn: X Lisesi).")
-        new_principal = st.text_input("Okul Müdürü Adı", value=rc.get("principal_name", ""), help="İmza bölümünde görünecek isim.")
-        new_notification = st.text_area("Alt Bilgi Metni", value=rc.get("notification_text", "Bu Haftalık Ders Programı belirtilen tarihte tebliğ edildi."), help="Tablonun altında görünecek bilgilendirme yazısı.")
+            st.session_state.lesson_config = {
+                "start_time": new_start,
+                "lesson_duration": new_ldur,
+                "break_duration": new_bdur,
+                "lunch_duration": new_lunch_dur,
+                "num_hours": new_num_hours,
+                "lunch_break_hour": new_lunch_hour,
+                "duty_day_reduction": duty_reduction
+            }
         
-        st.session_state.report_config = {
-            "principal_name": new_principal,
-            "notification_text": new_notification,
-            "report_title": new_title
-        }
-    
-    with st.expander("E-Posta Ayarları (SMTP)", expanded=False):
-        st.info("Öğretmenlere ders programlarını e-posta ile göndermek için SMTP ayarlarını yapılandırın. (Gmail için 'Uygulama Şifresi' kullanmanız gerekebilir.)")
-        ec = st.session_state.email_config
-        smtp_server = st.text_input("SMTP Sunucusu", value=ec.get("smtp_server", "smtp.gmail.com"))
-        smtp_port = st.number_input("SMTP Portu", value=ec.get("smtp_port", 465))
-        sender_email = st.text_input("Gönderen E-Posta", value=ec.get("sender_email", ""))
-        sender_password = st.text_input("Şifre / Uygulama Şifresi", value=ec.get("sender_password", ""), type="password", help="Gmail kullanıyorsanız normal şifreniz çalışmayabilir. 'Uygulama Şifresi' oluşturup onu girmelisiniz.")
+        with st.expander("Rapor Ayarları (İmza ve Metinler)", expanded=False):
+            rc = st.session_state.report_config
+            new_title = st.text_input("Rapor Başlığı (Okul Adı)", value=rc.get("report_title", ""), help="Raporun en üstünde görünecek başlık (Örn: X Lisesi).")
+            new_principal = st.text_input("Okul Müdürü Adı", value=rc.get("principal_name", ""), help="İmza bölümünde görünecek isim.")
+            new_notification = st.text_area("Alt Bilgi Metni", value=rc.get("notification_text", "Bu Haftalık Ders Programı belirtilen tarihte tebliğ edildi."), help="Tablonun altında görünecek bilgilendirme yazısı.")
+            
+            st.session_state.report_config = {
+                "principal_name": new_principal,
+                "notification_text": new_notification,
+                "report_title": new_title
+            }
         
-        st.divider()
-        email_subject = st.text_input("E-Posta Konusu", value=ec.get("email_subject", "Haftalık Ders Programı"), help="Konu başlığında {name} kullanarak öğretmen adını ekleyebilirsiniz.")
-        email_body = st.text_area("E-Posta İçeriği", value=ec.get("email_body", "Sayın {name},\n\nYeni haftalık ders programınız ektedir.\n\nİyi çalışmalar dileriz."), help="{name} yazan yere öğretmen adı otomatik gelecektir.")
+        with st.expander("E-Posta Ayarları (SMTP)", expanded=False):
+            st.info("Öğretmenlere ders programlarını e-posta ile göndermek için SMTP ayarlarını yapılandırın. (Gmail için 'Uygulama Şifresi' kullanmanız gerekebilir.)")
+            ec = st.session_state.email_config
+            smtp_server = st.text_input("SMTP Sunucusu", value=ec.get("smtp_server", "smtp.gmail.com"))
+            smtp_port = st.number_input("SMTP Portu", value=ec.get("smtp_port", 465))
+            sender_email = st.text_input("Gönderen E-Posta", value=ec.get("sender_email", ""))
+            sender_password = st.text_input("Şifre / Uygulama Şifresi", value=ec.get("sender_password", ""), type="password", help="Gmail kullanıyorsanız normal şifreniz çalışmayabilir. 'Uygulama Şifresi' oluşturup onu girmelisiniz.")
+            
+            st.divider()
+            email_subject = st.text_input("E-Posta Konusu", value=ec.get("email_subject", "Haftalık Ders Programı"), help="Konu başlığında {name} kullanarak öğretmen adını ekleyebilirsiniz.")
+            email_body = st.text_area("E-Posta İçeriği", value=ec.get("email_body", "Sayın {name},\n\nYeni haftalık ders programınız ektedir.\n\nİyi çalışmalar dileriz."), help="{name} yazan yere öğretmen adı otomatik gelecektir.")
+            
+            st.session_state.email_config = {
+                "smtp_server": smtp_server,
+                "smtp_port": smtp_port,
+                "sender_email": sender_email,
+                "sender_password": sender_password,
+                "email_subject": email_subject,
+                "email_body": email_body
+            }
         
-        st.session_state.email_config = {
-            "smtp_server": smtp_server,
-            "smtp_port": smtp_port,
-            "sender_email": sender_email,
-            "sender_password": sender_password,
-            "email_subject": email_subject,
-            "email_body": email_body
-        }
-    
-    mode = st.radio("Mod:", ["Sınıf Bazlı", "Derslik Bazlı"])
+        mode = st.radio("Mod:", ["Sınıf Bazlı", "Derslik Bazlı"])
+    else:
+        mode = "Sınıf Bazlı"
+
     solver_mode = "room" if "Derslik" in mode else "class"
     
     # Değerleri config'den al
@@ -1413,7 +1586,7 @@ elif menu == "Program Oluştur":
     lunch_val = st.session_state.lesson_config.get("lunch_break_hour", "Yok")
     lunch_break_hour = int(lunch_val) if lunch_val != "Yok" else None
 
-    if st.button("Programı Dağıt"):
+    if st.session_state.role == "admin" and st.button("Programı Dağıt"):
         st.session_state.last_schedule = [] # Yeni işlem öncesi eski sonucu temizle
         
         # İlerleme Çubuğu Oluştur
@@ -1581,24 +1754,25 @@ elif menu == "Program Oluştur":
             st.dataframe(df)
         
         # --- Öğretmen Programı Görüntüleyici (Yeni Özellik) ---
-        st.divider()
-        st.subheader("🔍 Öğretmen Programı Görüntüle")
-        
-        view_t_list = [t['name'] for t in st.session_state.teachers]
-        selected_view_t = st.selectbox("Programını Görmek İstediğiniz Öğretmeni Seçin", view_t_list, key="sel_teacher_view_specific")
-        
-        if selected_view_t:
-            t_view_df = df[df["Öğretmen"] == selected_view_t].copy()
-            if not t_view_df.empty:
-                t_view_df["Hucre"] = t_view_df["Sınıf"] + " - " + t_view_df["Ders"]
-                t_view_pivot = t_view_df.pivot(index="Saat", columns="Gün", values="Hucre")
-                
-                days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-                t_view_pivot = t_view_pivot.reindex(columns=days_order, index=range(1, num_hours + 1)).fillna("")
-                
-                st.dataframe(t_view_pivot, use_container_width=True)
-            else:
-                st.info(f"{selected_view_t} isimli öğretmenin programda dersi bulunmamaktadır.")
+        if st.session_state.role != "teacher":
+            st.divider()
+            st.subheader("🔍 Öğretmen Programı Görüntüle")
+            
+            view_t_list = [t['name'] for t in st.session_state.teachers]
+            selected_view_t = st.selectbox("Programını Görmek İstediğiniz Öğretmeni Seçin", view_t_list, key="sel_teacher_view_specific")
+            
+            if selected_view_t:
+                t_view_df = df[df["Öğretmen"] == selected_view_t].copy()
+                if not t_view_df.empty:
+                    t_view_df["Hucre"] = t_view_df["Sınıf"] + " - " + t_view_df["Ders"]
+                    t_view_pivot = t_view_df.pivot(index="Saat", columns="Gün", values="Hucre")
+                    
+                    days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                    t_view_pivot = t_view_pivot.reindex(columns=days_order, index=range(1, num_hours + 1)).fillna("")
+                    
+                    st.dataframe(t_view_pivot, use_container_width=True)
+                else:
+                    st.info(f"{selected_view_t} isimli öğretmenin programda dersi bulunmamaktadır.")
 
         # PDF İndirme Butonu
         if FPDF:
@@ -1617,104 +1791,105 @@ elif menu == "Program Oluştur":
             st.warning("PDF çıktısı alabilmek için 'fpdf' kütüphanesini yükleyin: pip install fpdf")
             
         # Çarşaf Liste (Excel)
-        st.divider()
-        st.subheader("📊 Çarşaf Liste (Excel)")
-        st.info("Öğretmenlerin veya Sınıfların tüm programını tek bir tabloda (Çarşaf Liste) görmek için aşağıdaki butonları kullanın.")
-        
-        col_cl1, col_cl2 = st.columns(2)
-        
-        with col_cl1:
-            if st.button("Öğretmen Çarşaf Listesini İndir (.xlsx)"):
-                # Veriyi hazırla
-                days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-                
-                # Başlıklar
-                headers = ["Öğretmen"]
-                for d in days:
-                    for h in range(1, num_hours + 1):
-                        headers.append(f"{d} {h}.Ders")
-                
-                rows = []
-                # Tüm öğretmenleri al (sıralı)
-                all_teachers = sorted([t['name'] for t in st.session_state.teachers])
-                
-                # Hızlı erişim için sözlük oluştur
-                schedule_map = {} 
-                for item in schedule:
-                    key = (item['Öğretmen'], item['Gün'], item['Saat'])
-                    val = f"{item['Sınıf']} - {item['Ders']}"
-                    schedule_map[key] = val
+        if st.session_state.role != "teacher":
+            st.divider()
+            st.subheader("📊 Çarşaf Liste (Excel)")
+            st.info("Öğretmenlerin veya Sınıfların tüm programını tek bir tabloda (Çarşaf Liste) görmek için aşağıdaki butonları kullanın.")
+            
+            col_cl1, col_cl2 = st.columns(2)
+            
+            with col_cl1:
+                if st.button("Öğretmen Çarşaf Listesini İndir (.xlsx)"):
+                    # Veriyi hazırla
+                    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
                     
-                for t_name in all_teachers:
-                    row = [t_name]
+                    # Başlıklar
+                    headers = ["Öğretmen"]
                     for d in days:
                         for h in range(1, num_hours + 1):
-                            val = schedule_map.get((t_name, d, h), "-")
-                            row.append(val)
-                    rows.append(row)
+                            headers.append(f"{d} {h}.Ders")
                     
-                df_master = pd.DataFrame(rows, columns=headers)
-                
-                # Excel'e aktar
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_master.to_excel(writer, index=False, sheet_name='CarsafListe')
+                    rows = []
+                    # Tüm öğretmenleri al (sıralı)
+                    all_teachers = sorted([t['name'] for t in st.session_state.teachers])
                     
-                st.download_button(
-                    label="📥 Öğretmen Çarşaf Listeyi İndir",
-                    data=output.getvalue(),
-                    file_name="ogretmen_carsaf_liste.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        
-        with col_cl2:
-            if st.button("Sınıf Çarşaf Listesini İndir (.xlsx)"):
-                # Veriyi hazırla
-                days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-                
-                # Başlıklar
-                headers = ["Sınıf"]
-                for d in days:
-                    for h in range(1, num_hours + 1):
-                        headers.append(f"{d} {h}.Ders")
-                
-                rows = []
-                # Tüm sınıfları al (sıralı)
-                all_classes = sorted(st.session_state.classes)
-                
-                # Hızlı erişim için sözlük oluştur
-                schedule_map = {} 
-                for item in schedule:
-                    key = (item['Sınıf'], item['Gün'], item['Saat'])
-                    val = f"{item['Ders']} ({item['Öğretmen']})"
-                    schedule_map[key] = val
+                    # Hızlı erişim için sözlük oluştur
+                    schedule_map = {} 
+                    for item in schedule:
+                        key = (item['Öğretmen'], item['Gün'], item['Saat'])
+                        val = f"{item['Sınıf']} - {item['Ders']}"
+                        schedule_map[key] = val
+                        
+                    for t_name in all_teachers:
+                        row = [t_name]
+                        for d in days:
+                            for h in range(1, num_hours + 1):
+                                val = schedule_map.get((t_name, d, h), "-")
+                                row.append(val)
+                        rows.append(row)
+                        
+                    df_master = pd.DataFrame(rows, columns=headers)
                     
-                for c_name in all_classes:
-                    row = [c_name]
+                    # Excel'e aktar
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_master.to_excel(writer, index=False, sheet_name='CarsafListe')
+                        
+                    st.download_button(
+                        label="📥 Öğretmen Çarşaf Listeyi İndir",
+                        data=output.getvalue(),
+                        file_name="ogretmen_carsaf_liste.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            
+            with col_cl2:
+                if st.button("Sınıf Çarşaf Listesini İndir (.xlsx)"):
+                    # Veriyi hazırla
+                    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                    
+                    # Başlıklar
+                    headers = ["Sınıf"]
                     for d in days:
                         for h in range(1, num_hours + 1):
-                            val = schedule_map.get((c_name, d, h), "-")
-                            row.append(val)
-                    rows.append(row)
+                            headers.append(f"{d} {h}.Ders")
                     
-                df_master_class = pd.DataFrame(rows, columns=headers)
-                
-                # Excel'e aktar
-                output_class = io.BytesIO()
-                with pd.ExcelWriter(output_class, engine='openpyxl') as writer:
-                    df_master_class.to_excel(writer, index=False, sheet_name='SinifCarsafListe')
+                    rows = []
+                    # Tüm sınıfları al (sıralı)
+                    all_classes = sorted(st.session_state.classes)
                     
-                st.download_button(
-                    label="📥 Sınıf Çarşaf Listeyi İndir",
-                    data=output_class.getvalue(),
-                    file_name="sinif_carsaf_liste.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                    # Hızlı erişim için sözlük oluştur
+                    schedule_map = {} 
+                    for item in schedule:
+                        key = (item['Sınıf'], item['Gün'], item['Saat'])
+                        val = f"{item['Ders']} ({item['Öğretmen']})"
+                        schedule_map[key] = val
+                        
+                    for c_name in all_classes:
+                        row = [c_name]
+                        for d in days:
+                            for h in range(1, num_hours + 1):
+                                val = schedule_map.get((c_name, d, h), "-")
+                                row.append(val)
+                        rows.append(row)
+                        
+                    df_master_class = pd.DataFrame(rows, columns=headers)
+                    
+                    # Excel'e aktar
+                    output_class = io.BytesIO()
+                    with pd.ExcelWriter(output_class, engine='openpyxl') as writer:
+                        df_master_class.to_excel(writer, index=False, sheet_name='SinifCarsafListe')
+                        
+                    st.download_button(
+                        label="📥 Sınıf Çarşaf Listeyi İndir",
+                        data=output_class.getvalue(),
+                        file_name="sinif_carsaf_liste.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
             
         # E-Posta Gönderim Butonu
         st.divider()
         st.subheader("📧 Programları E-Posta ile Gönder")
-        if st.button("Öğretmenlere Programlarını Gönder"):
+        if st.session_state.role == "admin" and st.button("Öğretmenlere Programlarını Gönder"):
             ec = st.session_state.email_config
             if not ec.get("sender_email") or not ec.get("sender_password"):
                 st.error("Lütfen önce 'E-Posta Ayarları' bölümünden gönderici bilgilerini giriniz.")
@@ -1800,6 +1975,8 @@ elif menu == "Program Oluştur":
                             st.error(f"Hata Detayı: {e}")
                     except Exception as e:
                         st.error(f"Genel bağlantı hatası: {e}")
+        elif st.session_state.role != "admin":
+            st.info("E-Posta gönderimi sadece yönetici yetkisiyle yapılabilir.")
 
         st.divider()
         st.subheader("📱 WhatsApp ile Program Paylaşımı")
