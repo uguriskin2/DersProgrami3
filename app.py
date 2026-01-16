@@ -2418,10 +2418,22 @@ elif menu == "Veri İşlemleri":
                     init_db()
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
+                    
+                    # Okul ID varsa prefix ekle
+                    school_id = st.session_state.get('school_id')
+                    prefix = f"school_{school_id}_" if school_id else ""
+
                     for k, v in data.items():
-                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (k, json.dumps(v, ensure_ascii=False)))
+                        db_key = f"{prefix}{k}"
+                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
                     conn.commit()
                     conn.close()
+                    
+                    # Session state'i temizle ki yeni veriler yüklensin
+                    for key in list(st.session_state.keys()):
+                        if key not in ['logged_in', 'role', 'school_id', 'school_name']:
+                            del st.session_state[key]
+
                     st.success("Veriler başarıyla yüklendi! Uygulama yeniden başlatılıyor...")
                     time.sleep(1)
                     st.rerun()
@@ -2440,11 +2452,22 @@ elif menu == "Veri İşlemleri":
                     init_db()
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
+                    
+                    # Okul ID varsa prefix ekle
+                    school_id = st.session_state.get('school_id')
+                    prefix = f"school_{school_id}_" if school_id else ""
+
                     for k, v in data.items():
-                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (k, json.dumps(v, ensure_ascii=False)))
+                        db_key = f"{prefix}{k}"
+                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
                     conn.commit()
                     conn.close()
                     
+                    # Session state'i temizle ki yeni veriler yüklensin
+                    for key in list(st.session_state.keys()):
+                        if key not in ['logged_in', 'role', 'school_id', 'school_name']:
+                            del st.session_state[key]
+
                     st.success("Veriler JSON dosyasından veritabanına başarıyla aktarıldı! Uygulama yeniden başlatılıyor...")
                     time.sleep(1)
                     st.rerun()
