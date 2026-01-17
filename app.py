@@ -33,55 +33,65 @@ DB_FILE = os.path.join(DATA_DIR, "okul_verileri.db")
 
 def init_db():
     """Veritabanı tablosunu oluşturur."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Anahtar-Değer saklama yapısı (Key-Value Store)
-    c.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)')
-    # Okullar tablosu
-    c.execute('CREATE TABLE IF NOT EXISTS schools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, username TEXT UNIQUE, password TEXT)')
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        # Anahtar-Değer saklama yapısı (Key-Value Store)
+        c.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)')
+        # Okullar tablosu
+        c.execute('CREATE TABLE IF NOT EXISTS schools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, username TEXT UNIQUE, password TEXT)')
 
 def create_school(name, username, password):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
     try:
-        c.execute("INSERT INTO schools (name, username, password) VALUES (?, ?, ?)", (name, username, password))
-        conn.commit()
+        with sqlite3.connect(DB_FILE) as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO schools (name, username, password) VALUES (?, ?, ?)", (name, username, password))
         return True, "Okul başarıyla oluşturuldu."
     except sqlite3.IntegrityError:
         return False, "Bu kullanıcı adı zaten kullanılıyor."
     except Exception as e:
         return False, str(e)
-    finally:
-        conn.close()
 
 def get_schools():
     if not os.path.exists(DB_FILE): return []
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id, name, username FROM schools")
-    rows = c.fetchall()
-    conn.close()
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name, username FROM schools")
+        rows = c.fetchall()
     return rows
 
 def delete_school(school_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM schools WHERE id = ?", (school_id,))
-    # Okula ait verileri de temizle
-    prefix = f"school_{school_id}_%"
-    c.execute("DELETE FROM kv_store WHERE key LIKE ?", (prefix,))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM schools WHERE id = ?", (school_id,))
+        # Okula ait verileri de temizle
+        prefix = f"school_{school_id}_%"
+        c.execute("DELETE FROM kv_store WHERE key LIKE ?", (prefix,))
+
+def update_school(school_id, name, username, password):
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            c = conn.cursor()
+            if password:
+                c.execute("UPDATE schools SET name = ?, username = ?, password = ? WHERE id = ?", (name, username, password, school_id))
+            else:
+                c.execute("UPDATE schools SET name = ?, username = ? WHERE id = ?", (name, username, school_id))
+        return True, "Okul güncellendi."
+    except sqlite3.IntegrityError:
+        return False, "Bu kullanıcı adı zaten kullanılıyor."
+    except Exception as e:
+        return False, str(e)
+
+def get_db_size():
+    if os.path.exists(DB_FILE):
+        return os.path.getsize(DB_FILE)
+    return 0
 
 def verify_school_user(username, password):
     if not os.path.exists(DB_FILE): return None
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id, name FROM schools WHERE username = ? AND password = ?", (username, password))
-    row = c.fetchone()
-    conn.close()
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name FROM schools WHERE username = ? AND password = ?", (username, password))
+        row = c.fetchone()
     return row # (id, name)
 
 def load_data(school_id=None):
@@ -94,13 +104,12 @@ def load_data(school_id=None):
         data = {}
         if db_exists:
             try:
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                prefix = f"school_{school_id}_"
-                c.execute("SELECT key, value FROM kv_store WHERE key LIKE ?", (f"{prefix}%",))
-                rows = c.fetchall()
-                conn.close()
-                
+                with sqlite3.connect(DB_FILE) as conn:
+                    c = conn.cursor()
+                    prefix = f"school_{school_id}_"
+                    c.execute("SELECT key, value FROM kv_store WHERE key LIKE ?", (f"{prefix}%",))
+                    rows = c.fetchall()
+
                 for key, val in rows:
                     # Prefix'i kaldırarak dict'e ekle
                     clean_key = key[len(prefix):]
@@ -131,11 +140,10 @@ def load_data(school_id=None):
     # 2. SQLite Veritabanını dene
     if db_exists:
         try:
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute('SELECT key, value FROM kv_store')
-            rows = c.fetchall()
-            conn.close()
+            with sqlite3.connect(DB_FILE) as conn:
+                c = conn.cursor()
+                c.execute('SELECT key, value FROM kv_store')
+                rows = c.fetchall()
             
             data = {}
             for key, val in rows:
@@ -191,18 +199,16 @@ def save_data():
     # 2. SQLite Veritabanına Kayıt
     try:
         init_db() # Tablo yoksa oluştur
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        
-        prefix = f"school_{school_id}_" if school_id else ""
-        
-        for k, v in data.items():
-            # Okul ID varsa anahtarı prefixle
-            db_key = f"{prefix}{k}"
-            # Her bir veri parçasını (teachers, courses vb.) ayrı satır olarak kaydet
-            c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(DB_FILE) as conn:
+            c = conn.cursor()
+            
+            prefix = f"school_{school_id}_" if school_id else ""
+            
+            for k, v in data.items():
+                # Okul ID varsa anahtarı prefixle
+                db_key = f"{prefix}{k}"
+                # Her bir veri parçasını (teachers, courses vb.) ayrı satır olarak kaydet
+                c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
         st.toast("Veriler Veritabanına (SQLite) Kaydedildi!", icon="💾")
     except Exception as e:
         st.error(f"Veritabanı kayıt hatası: {e}")
@@ -212,25 +218,22 @@ def search_teacher_by_name(name_query):
     SQLite JSON özelliklerini kullanarak veritabanından isme göre öğretmen arar.
     """
     if not os.path.exists(DB_FILE): return []
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
     try:
-        # json_each fonksiyonu JSON dizisini sanal bir tabloya dönüştürür
-        # key='teachers' olan satırdaki JSON listesini parçalar
-        query = """
-            SELECT json_each.value 
-            FROM kv_store, json_each(kv_store.value) 
-            WHERE key = 'teachers' 
-            AND json_extract(json_each.value, '$.name') LIKE ?
-        """
-        c.execute(query, (f'%{name_query}%',))
-        return [json.loads(row[0]) for row in c.fetchall()]
+        with sqlite3.connect(DB_FILE) as conn:
+            c = conn.cursor()
+            # json_each fonksiyonu JSON dizisini sanal bir tabloya dönüştürür
+            # key='teachers' olan satırdaki JSON listesini parçalar
+            query = """
+                SELECT json_each.value 
+                FROM kv_store, json_each(kv_store.value) 
+                WHERE key = 'teachers' 
+                AND json_extract(json_each.value, '$.name') LIKE ?
+            """
+            c.execute(query, (f'%{name_query}%',))
+            return [json.loads(row[0]) for row in c.fetchall()]
     except Exception as e:
         st.error(f"Arama hatası: {e}")
         return []
-    finally:
-        conn.close()
 
 def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
     if not FPDF: return None
@@ -649,36 +652,108 @@ if st.session_state.get("role") == "super_admin":
     
     st.title("🏫 Okul Yönetim Paneli")
     
-    # Okul Ekleme
-    with st.form("add_school_form"):
-        st.subheader("Yeni Okul Oluştur")
-        col_s1, col_s2, col_s3 = st.columns(3)
-        new_s_name = col_s1.text_input("Okul Adı")
-        new_s_user = col_s2.text_input("Yönetici Kullanıcı Adı")
-        new_s_pass = col_s3.text_input("Şifre", type="password")
-        if st.form_submit_button("Okul Ekle"):
-            if new_s_name and new_s_user and new_s_pass:
-                success, msg = create_school(new_s_name, new_s_user, new_s_pass)
-                if success: st.success(msg)
-                else: st.error(msg)
-            else:
-                st.warning("Lütfen tüm alanları doldurun.")
-    
-    # Okul Listesi
-    st.divider()
-    st.subheader("Mevcut Okullar")
+    # İstatistikler
     schools = get_schools()
-    if schools:
-        for s in schools:
-            with st.container():
-                c1, c2, c3 = st.columns([3, 2, 1])
-                c1.write(f"**{s[1]}** (ID: {s[0]})")
-                c2.write(f"Yönetici: `{s[2]}`")
-                if c3.button("Sil 🗑️", key=f"del_school_{s[0]}"):
-                    delete_school(s[0])
+    total_schools = len(schools)
+    db_size = get_db_size()
+    db_size_mb = db_size / (1024 * 1024)
+    
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("Toplam Okul", total_schools)
+    col_m2.metric("Veritabanı Boyutu", f"{db_size_mb:.2f} MB")
+    col_m3.metric("Sistem Durumu", "Aktif", delta="Çalışıyor")
+    
+    st.divider()
+    
+    tab_main, tab_sys = st.tabs(["🏫 Okul Yönetimi", "⚙️ Sistem"])
+    
+    with tab_main:
+        col_left, col_right = st.columns([2, 1])
+        
+        with col_left:
+            st.subheader("Kayıtlı Okullar")
+            if schools:
+                df_schools = pd.DataFrame(schools, columns=["ID", "Okul Adı", "Kullanıcı Adı"])
+                st.dataframe(df_schools, use_container_width=True, hide_index=True)
+            else:
+                st.info("Henüz kayıtlı okul bulunmamaktadır.")
+        
+        with col_right:
+            st.subheader("İşlemler")
+            action_type = st.radio("İşlem Seçiniz", ["Yeni Okul Ekle", "Okul Düzenle", "Okul Sil"])
+            
+            if action_type == "Yeni Okul Ekle":
+                with st.form("add_school_form"):
+                    new_s_name = st.text_input("Okul Adı")
+                    new_s_user = st.text_input("Yönetici Kullanıcı Adı")
+                    new_s_pass = st.text_input("Şifre", type="password")
+                    if st.form_submit_button("Okul Ekle", type="primary"):
+                        if new_s_name and new_s_user and new_s_pass:
+                            success, msg = create_school(new_s_name, new_s_user, new_s_pass)
+                            if success: 
+                                st.success(msg)
+                                time.sleep(1)
+                                st.rerun()
+                            else: st.error(msg)
+                        else:
+                            st.warning("Lütfen tüm alanları doldurun.")
+            
+            elif action_type == "Okul Düzenle":
+                if schools:
+                    school_opts = {f"{s[1]} ({s[2]})": s for s in schools}
+                    selected_s_name = st.selectbox("Okul Seç", list(school_opts.keys()))
+                    selected_s = school_opts[selected_s_name]
+                    
+                    with st.form("edit_school_form"):
+                        edit_name = st.text_input("Okul Adı", value=selected_s[1])
+                        edit_user = st.text_input("Kullanıcı Adı", value=selected_s[2])
+                        edit_pass = st.text_input("Yeni Şifre (Değişmeyecekse boş bırakın)", type="password")
+                        
+                        if st.form_submit_button("Güncelle"):
+                            suc, msg = update_school(selected_s[0], edit_name, edit_user, edit_pass)
+                            if suc:
+                                st.success(msg)
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                else:
+                    st.warning("Düzenlenecek okul yok.")
+            
+            elif action_type == "Okul Sil":
+                if schools:
+                    school_opts = {f"{s[1]} ({s[2]})": s for s in schools}
+                    selected_s_name = st.selectbox("Silinecek Okul", list(school_opts.keys()))
+                    selected_s = school_opts[selected_s_name]
+                    
+                    st.warning(f"**{selected_s[1]}** okulunu ve tüm verilerini silmek üzeresiniz!")
+                    if st.button("Evet, Okulu Sil", type="primary"):
+                        delete_school(selected_s[0])
+                        st.success("Okul başarıyla silindi.")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.warning("Silinecek okul yok.")
+
+    with tab_sys:
+        st.subheader("Sistem Bakımı")
+        c_sys1, c_sys2 = st.columns(2)
+        with c_sys1:
+            if st.button("Veritabanını Optimize Et (VACUUM)"):
+                try:
+                    with sqlite3.connect(DB_FILE) as conn:
+                        conn.execute("VACUUM")
+                    st.success("Veritabanı optimize edildi ve boyutu küçültüldü.")
+                    time.sleep(1)
                     st.rerun()
-    else:
-        st.info("Sistemde kayıtlı okul bulunmamaktadır.")
+                except Exception as e:
+                    st.error(f"Hata: {e}")
+        
+        with c_sys2:
+            if os.path.exists(DB_FILE):
+                with open(DB_FILE, "rb") as f:
+                    st.download_button("Veritabanı Yedeğini İndir", f, file_name="okul_verileri.db", mime="application/x-sqlite3")
+
     st.stop()
 
 # --- Session State Başlatma ---
@@ -2416,18 +2491,16 @@ elif menu == "Veri İşlemleri":
                     data = json.load(uploaded_json)
                     # Veritabanına yaz
                     init_db()
-                    conn = sqlite3.connect(DB_FILE)
-                    c = conn.cursor()
-                    
-                    # Okul ID varsa prefix ekle
-                    school_id = st.session_state.get('school_id')
-                    prefix = f"school_{school_id}_" if school_id else ""
+                    with sqlite3.connect(DB_FILE) as conn:
+                        c = conn.cursor()
+                        
+                        # Okul ID varsa prefix ekle
+                        school_id = st.session_state.get('school_id')
+                        prefix = f"school_{school_id}_" if school_id else ""
 
-                    for k, v in data.items():
-                        db_key = f"{prefix}{k}"
-                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
-                    conn.commit()
-                    conn.close()
+                        for k, v in data.items():
+                            db_key = f"{prefix}{k}"
+                            c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
                     
                     # Session state'i temizle ki yeni veriler yüklensin
                     for key in list(st.session_state.keys()):
@@ -2450,18 +2523,16 @@ elif menu == "Veri İşlemleri":
                     
                     # Veritabanına yaz
                     init_db()
-                    conn = sqlite3.connect(DB_FILE)
-                    c = conn.cursor()
-                    
-                    # Okul ID varsa prefix ekle
-                    school_id = st.session_state.get('school_id')
-                    prefix = f"school_{school_id}_" if school_id else ""
+                    with sqlite3.connect(DB_FILE) as conn:
+                        c = conn.cursor()
+                        
+                        # Okul ID varsa prefix ekle
+                        school_id = st.session_state.get('school_id')
+                        prefix = f"school_{school_id}_" if school_id else ""
 
-                    for k, v in data.items():
-                        db_key = f"{prefix}{k}"
-                        c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
-                    conn.commit()
-                    conn.close()
+                        for k, v in data.items():
+                            db_key = f"{prefix}{k}"
+                            c.execute('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)', (db_key, json.dumps(v, ensure_ascii=False)))
                     
                     # Session state'i temizle ki yeni veriler yüklensin
                     for key in list(st.session_state.keys()):
