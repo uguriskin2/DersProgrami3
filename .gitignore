@@ -1,4 +1,5 @@
-.streamlit/secrets.toml
 __pycache__/
 *.pyc
-data/
+*.db
+.streamlit/secrets.toml
+data/okul_verileri.db
