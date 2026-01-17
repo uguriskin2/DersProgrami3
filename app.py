@@ -12,6 +12,7 @@ import time
 import hmac
 import urllib.parse
 import random
+from collections import deque
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -630,8 +631,9 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
         current_week_vps = vice_principals
         if rotate_weekly and vice_principals:
             vp_list_ordered = [vice_principals.get(d, "") for d in days]
-            shift = w % len(days)
-            rotated_vp_list = vp_list_ordered[-shift:] + vp_list_ordered[:-shift]
+            d_q = deque(vp_list_ordered)
+            d_q.rotate(w)
+            rotated_vp_list = list(d_q)
             current_week_vps = {d: rotated_vp_list[i] for i, d in enumerate(days)}
 
         # Rotasyon (İlk hafta hariç)
