@@ -190,7 +190,8 @@ def save_data():
         "duty_places": st.session_state.get('duty_places', []),
         "duty_place_constraints": st.session_state.get('duty_place_constraints', {}),
         "duty_place_branch_constraints": st.session_state.get('duty_place_branch_constraints', {}),
-        "duty_place_scores": st.session_state.get('duty_place_scores', {})
+        "duty_place_scores": st.session_state.get('duty_place_scores', {}),
+        "vice_principals": st.session_state.get('vice_principals', {})
     }
     
     # 1. JSON Yedeği (Sadece tekil modda veya yedekleme amaçlı)
@@ -526,7 +527,7 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
         # FPDF 1.7.x için (string döner, encode gerekir)
         return pdf.output(dest='S').encode('latin-1', 'replace')
 
-def create_duty_pdf(start_date=None, num_weeks=1):
+def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
     if not FPDF: return None
     
     # Font Ayarları
@@ -614,10 +615,18 @@ def create_duty_pdf(start_date=None, num_weeks=1):
             
             for i, d_name in enumerate(days):
                 d_obj = current_monday + timedelta(days=i)
-                week_dates[d_name] = f"{d_name}\n{d_obj.strftime('%d.%m')}"
+                vp_name = vice_principals.get(d_name, "") if vice_principals else ""
+                header_text = f"{d_name}\n{d_obj.strftime('%d.%m.%Y')}"
+                if vp_name:
+                    header_text += f"\n{vp_name}"
+                week_dates[d_name] = header_text
         else:
             for d_name in days:
-                week_dates[d_name] = d_name
+                vp_name = vice_principals.get(d_name, "") if vice_principals else ""
+                header_text = d_name
+                if vp_name:
+                    header_text += f"\n{vp_name}"
+                week_dates[d_name] = header_text
 
         pdf.week_title = f"Nöbet Çizelgesi{title_suffix}"
         # Başlığı manuel tekrar yazdır (add_page sonrası header otomatik çalışır ama title güncellemesi için)
@@ -635,14 +644,20 @@ def create_duty_pdf(start_date=None, num_weeks=1):
             # Tablo Başlığı
             x_start = pdf.get_x()
             y_start = pdf.get_y()
-            pdf.cell(w_place, 10, clean_text("Nöbet Yeri"), 1, 0, 'C')
+            
+            # Başlık yüksekliğini içeriğe göre ayarla (Tarih ve Müdür Yrd varsa artır)
+            header_height = 10
+            if start_date or (vice_principals and any(vice_principals.values())):
+                header_height = 20
+            
+            pdf.cell(w_place, header_height, clean_text("Nöbet Yeri"), 1, 0, 'C')
             for d in days:
                 # Çok satırlı başlık (Tarih varsa)
                 x_curr = pdf.get_x()
                 y_curr = pdf.get_y()
                 pdf.multi_cell(w_day, 5, clean_text(week_dates[d]), 1, 'C')
                 pdf.set_xy(x_curr + w_day, y_curr)
-            pdf.ln(10) # Multi cell yüksekliği kadar in (2 satır * 5 = 10)
+            pdf.ln(header_height) 
             
             pdf.set_font(font_family, '', 9)
             
@@ -671,13 +686,13 @@ def create_duty_pdf(start_date=None, num_weeks=1):
                     pdf.add_page()
                     # Başlıkları tekrar bas (Basitleştirilmiş)
                     pdf.set_font(font_family, 'B', 10)
-                    pdf.cell(w_place, 10, clean_text("Nöbet Yeri"), 1, 0, 'C')
+                    pdf.cell(w_place, header_height, clean_text("Nöbet Yeri"), 1, 0, 'C')
                     for d in days:
                         x_curr = pdf.get_x()
                         y_curr = pdf.get_y()
                         pdf.multi_cell(w_day, 5, clean_text(week_dates[d]), 1, 'C')
                         pdf.set_xy(x_curr + w_day, y_curr)
-                    pdf.ln(10)
+                    pdf.ln(header_height)
                     pdf.set_font(font_family, '', 9)
 
                 x_start = pdf.get_x()
@@ -1023,6 +1038,8 @@ if 'duty_place_branch_constraints' not in st.session_state:
     st.session_state.duty_place_branch_constraints = saved_data.get('duty_place_branch_constraints', {})
 if 'duty_place_scores' not in st.session_state:
     st.session_state.duty_place_scores = saved_data.get('duty_place_scores', {})
+if 'vice_principals' not in st.session_state:
+    st.session_state.vice_principals = saved_data.get('vice_principals', {})
 
 # --- Yan Menü ---
 panel_title = f"Panel ({st.session_state.get('role', 'user')})"
@@ -2809,15 +2826,38 @@ elif menu == "Program Oluştur":
             # PDF İndirme Butonu
             if FPDF:
                 st.write("###### Rapor Seçenekleri")
+                
+                # Müdür Yardımcıları Girişi
+                st.write("###### Nöbetçi Müdür Yardımcıları")
+                cols_vp = st.columns(5)
+                days_list = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                
+                # Session state'den al ve güncelle
+                for i, d in enumerate(days_list):
+                    st.session_state.vice_principals[d] = cols_vp[i].text_input(d, value=st.session_state.vice_principals.get(d, ""), key=f"vp_input_{d}", placeholder="Müdür Yrd.")
+
+                if st.button("Müdür Yardımcılarını Kaydet", key="save_vps"):
+                    save_data()
+                    st.success("Müdür yardımcıları kaydedildi.")
+
                 col_rep1, col_rep2, col_rep3 = st.columns(3)
                 use_dates = col_rep1.checkbox("Tarihli Çizelge Oluştur", value=False)
                 start_date = None
                 num_weeks = 1
                 if use_dates:
-                    start_date = col_rep2.date_input("Başlangıç Tarihi (Pazartesi)", datetime.today())
+                    # Varsayılan olarak bugünün haftasının Pazartesi'sini bul
+                    today = datetime.today()
+                    monday = today - timedelta(days=today.weekday())
+                    start_date = col_rep2.date_input("Başlangıç Tarihi (Pazartesi)", monday)
+                    
+                    # Pazartesi kontrolü ve düzeltme
+                    if start_date.weekday() != 0:
+                        st.warning(f"Seçilen {start_date.strftime('%d.%m.%Y')} tarihi Pazartesi değil. Çizelge o haftanın Pazartesi gününden başlatılacak.")
+                        start_date = start_date - timedelta(days=start_date.weekday())
+                        
                     num_weeks = col_rep3.number_input("Hafta Sayısı (Örn: 4 hafta = 1 Ay)", min_value=1, max_value=10, value=4)
                 
-                pdf_duty = create_duty_pdf(start_date=start_date if use_dates else None, num_weeks=num_weeks)
+                pdf_duty = create_duty_pdf(start_date=start_date if use_dates else None, num_weeks=num_weeks, vice_principals=st.session_state.vice_principals)
                 st.download_button("📄 Nöbet Çizelgesini PDF İndir", data=pdf_duty, file_name="nobet_cizelgesi.pdf", mime="application/pdf")
         else:
             st.info("Henüz nöbet yeri tanımlanmış öğretmen bulunmamaktadır.")
