@@ -792,7 +792,8 @@ if 'lesson_config' not in st.session_state:
         "break_duration": 10,
         "lunch_duration": 50,
         "num_hours": 8,
-        "lunch_break_hour": "Yok"
+        "lunch_break_hour": "Yok",
+        "min_daily_hours": 2
     })
 if 'simultaneous_lessons' not in st.session_state:
     st.session_state.simultaneous_lessons = saved_data.get('simultaneous_lessons', {})
@@ -1605,7 +1606,9 @@ elif menu == "Program Oluştur":
             if curr_lunch not in lunch_opts: curr_lunch = "Yok"
             new_lunch_hour = col_t6.selectbox("Öğle Arası (Hangi Ders Boş?)", lunch_opts, index=lunch_opts.index(curr_lunch))
             
-            duty_reduction = st.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
+            col_dr1, col_dr2 = st.columns(2)
+            duty_reduction = col_dr1.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
+            min_daily = col_dr2.slider("Öğretmen Günlük Min. Ders (Geldiği Gün)", min_value=1, max_value=5, value=int(lc.get("min_daily_hours", 2)), help="Öğretmen okula geldiği gün en az kaç saat dersi olsun?")
 
             st.session_state.lesson_config = {
                 "start_time": new_start,
@@ -1614,7 +1617,8 @@ elif menu == "Program Oluştur":
                 "lunch_duration": new_lunch_dur,
                 "num_hours": new_num_hours,
                 "lunch_break_hour": new_lunch_hour,
-                "duty_day_reduction": duty_reduction
+                "duty_day_reduction": duty_reduction,
+                "min_daily_hours": min_daily
             }
         
         with st.expander("Rapor Ayarları (İmza ve Metinler)", expanded=False):
@@ -1690,6 +1694,7 @@ elif menu == "Program Oluştur":
                 mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
                 simultaneous_lessons=st.session_state.simultaneous_lessons,
                 duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
+                min_daily_hours=st.session_state.lesson_config.get("min_daily_hours", 2),
                 progress_callback=update_progress
             )
         except TypeError as e:
@@ -1704,7 +1709,8 @@ elif menu == "Program Oluştur":
                     room_excluded_courses=clean_room_excluded,
                     mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
                     simultaneous_lessons=st.session_state.simultaneous_lessons,
-                    duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2)
+                    duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
+                    min_daily_hours=st.session_state.lesson_config.get("min_daily_hours", 2)
                 )
             else:
                 raise e
@@ -1802,29 +1808,40 @@ elif menu == "Program Oluştur":
                 
                 # Seçilen derslik verisi
                 room_df = df[df["Derslik"] == r].copy()
-                st.info(f"📍 **{r}** dersliğinde toplam **{len(room_df)}** saat ders var.")
                 
-                # Hücre içeriği: Sınıf - Ders (Öğretmen)
-                room_df["Derslik_Hucre"] = room_df["Sınıf"] + " - " + room_df["Ders"] + " (" + room_df["Öğretmen"] + ")"
-                
-                pivot = room_df.pivot(index="Saat", columns="Gün", values="Derslik_Hucre")
-                days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-                pivot = pivot.reindex(columns=days_order, index=range(1, num_hours + 1))
-                pivot = pivot.fillna("Boş")
-                
-                def color_cell(val):
-                    if pd.isna(val) or val == "Boş": return ""
-                    h = hashlib.md5(str(val).encode()).hexdigest()
-                    r, g, b = int(h[:2], 16) % 50 + 200, int(h[2:4], 16) % 50 + 200, int(h[4:6], 16) % 50 + 200
-                    return f'background-color: rgb({r},{g},{b}); color: black'
+                if room_df.empty:
+                    st.warning(f"⚠️ **{r}** dersliği için programda ders bulunamadı.")
+                    st.caption("Eğer bu dersliği yeni eklediyseniz veya değişiklik yaptıysanız, **'Programı Dağıt'** butonuna basarak programı güncelleyiniz.")
+                else:
+                    st.info(f"📍 **{r}** dersliğinde toplam **{len(room_df)}** saat ders var.")
+                    
+                    # Hücre içeriği: Sınıf - Ders (Öğretmen)
+                    room_df["Derslik_Hucre"] = room_df["Sınıf"] + " - " + room_df["Ders"] + " (" + room_df["Öğretmen"] + ")"
+                    
+                    # Pivot tablo oluştururken duplicate kontrolü (Kapasite > 1 ise hata verebilir)
+                    try:
+                        pivot = room_df.pivot(index="Saat", columns="Gün", values="Derslik_Hucre")
+                    except ValueError:
+                        # Çakışma varsa (aynı saatte birden fazla ders), birleştirerek göster
+                        pivot = room_df.pivot_table(index="Saat", columns="Gün", values="Derslik_Hucre", aggfunc=lambda x: " / ".join(x))
 
-                st.dataframe(pivot.style.map(color_cell), width="stretch")
-                
-                # Ekran altına özet tablo ekle
-                st.write("###### Ders Dağılımı Özeti")
-                if not room_df.empty:
-                    summary = room_df.groupby(['Sınıf', 'Ders', 'Öğretmen']).size().reset_index(name='Saat')
-                    st.dataframe(summary, hide_index=True, use_container_width=True)
+                    days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                    pivot = pivot.reindex(columns=days_order, index=range(1, num_hours + 1))
+                    pivot = pivot.fillna("Boş")
+                    
+                    def color_cell(val):
+                        if pd.isna(val) or val == "Boş": return ""
+                        h = hashlib.md5(str(val).encode()).hexdigest()
+                        r, g, b = int(h[:2], 16) % 50 + 200, int(h[2:4], 16) % 50 + 200, int(h[4:6], 16) % 50 + 200
+                        return f'background-color: rgb({r},{g},{b}); color: black'
+
+                    st.dataframe(pivot.style.map(color_cell), width="stretch")
+                    
+                    # Ekran altına özet tablo ekle
+                    st.write("###### Ders Dağılımı Özeti")
+                    if not room_df.empty:
+                        summary = room_df.groupby(['Sınıf', 'Ders', 'Öğretmen']).size().reset_index(name='Saat')
+                        st.dataframe(summary, hide_index=True, use_container_width=True)
         else:
             st.dataframe(df)
         
@@ -2185,6 +2202,23 @@ elif menu == "Program Oluştur":
                     color='blue'
                 )
                 st.altair_chart(room_chart, use_container_width=True)
+                
+                # --- Isı Haritası (Heatmap) ---
+                st.write("###### Derslik - Gün Bazlı Yoğunluk Haritası")
+                heatmap_data = valid_rooms.groupby(["Derslik", "Gün"]).size().reset_index(name="Ders Saati")
+                days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                
+                heatmap_chart = alt.Chart(heatmap_data).mark_rect().encode(
+                    x=alt.X('Gün', sort=days_order, title='Gün'),
+                    y=alt.Y('Derslik', title='Derslik'),
+                    color=alt.Color('Ders Saati', title='Ders Saati', scale=alt.Scale(scheme='orangered')),
+                    tooltip=['Derslik', 'Gün', 'Ders Saati']
+                ).properties(title="Derslik Kullanım Yoğunluğu").configure_axis(
+                    labelFontSize=12,
+                    titleFontSize=14,
+                    titleFontWeight='bold'
+                ).configure_title(fontSize=20, color='blue')
+                st.altair_chart(heatmap_chart, use_container_width=True)
             else:
                 st.info("Programda tanımlı derslik kullanımı bulunamadı.")
 

@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 
-def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, duty_day_reduction=2, progress_callback=None):
+def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, duty_day_reduction=2, min_daily_hours=2, progress_callback=None):
     """
     mode: "class" (Sınıf bazlı dağıtım) veya "room" (Derslik bazlı dağıtım)
     """
@@ -505,9 +505,102 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                         if vars_c1 and vars_c2:
                             model.Add(sum(vars_c1) == sum(vars_c2))
 
+    # 16. ÖĞRETMENLERİN BOŞ GÜNÜ OLMASIN (Müsait günlere yayma)
+    # Kullanıcı talebi: "öğretmenlerin boş günlerini (izin günleri haricinde) OLUŞTURMA"
+    # Eğer öğretmenin ders yükü, müsait olduğu gün sayısını karşılıyorsa, her müsait güne en az 1 ders koy.
+    for t in teachers:
+        if not t.get('name'): continue
+        t_name = str(t['name']).strip()
+        
+        # Toplam yükü hesapla
+        t_load = 0
+        for c_name, courses in class_lessons.items():
+            for crs_name, count in courses.items():
+                if assignments.get(c_name, {}).get(crs_name) == t_name:
+                    t_load += int(count)
+        
+        if t_load == 0: continue
+
+        un_days = t.get('unavailable_days', []) or []
+        avail_days = [d for d in days if d not in un_days]
+        
+        # Eğer ders sayısı gün sayısına yetiyorsa kısıtlamayı ekle
+        if t_load >= len(avail_days):
+            for d in avail_days:
+                daily_vars = []
+                for key, var in lessons.items():
+                    if key[2] == t_name and key[4] == d:
+                        daily_vars.append(var)
+                
+                if daily_vars:
+                    model.Add(sum(daily_vars) >= 1)
+
+    # 17. ÖĞRETMEN GÜNLÜK DERS YÜKÜ DENGESİ (Min-Max)
+    # Eğer öğretmen o gün okula geliyorsa, en az X saat dersi olsun.
+    for t in teachers:
+        if not t.get('name'): continue
+        t_name = str(t['name']).strip()
+        
+        # Toplam ders yükünü hesapla
+        t_load = 0
+        for c_name, courses in class_lessons.items():
+            for crs_name, count in courses.items():
+                if assignments.get(c_name, {}).get(crs_name) == t_name:
+                    t_load += int(count)
+        
+        if t_load == 0: continue
+        
+        # Eğer toplam yük minimumdan azsa, bu kısıtlamayı uygulama (veya sadece toplam kadar olsun de)
+        effective_min = min_daily_hours
+        if t_load < effective_min:
+            effective_min = t_load
+
+        for d in days:
+            daily_vars = []
+            for key, var in lessons.items():
+                if key[2] == t_name and key[4] == d:
+                    daily_vars.append(var)
+            
+            if daily_vars:
+                is_present = model.NewBoolVar(f"present_{t_name}_{d}")
+                daily_sum = model.NewIntVar(0, num_hours, f"daily_sum_{t_name}_{d}")
+                model.Add(daily_sum == sum(daily_vars))
+                
+                # is_present <-> daily_sum > 0
+                model.Add(daily_sum > 0).OnlyEnforceIf(is_present)
+                model.Add(daily_sum == 0).OnlyEnforceIf(is_present.Not())
+                
+                # is_present -> daily_sum >= effective_min
+                model.Add(daily_sum >= effective_min).OnlyEnforceIf(is_present)
+
     # --- Amaç Fonksiyonu ---
     # Gevşetilmiş kısıtlamalar (<=) kullanıldığında boş program dönmemesi için atamayı maksimize et
-    model.Maximize(sum(lessons.values()))
+    # 1. Ana Hedef: Toplam atanan ders sayısını maksimize et
+    total_assigned = sum(lessons.values())
+    objective_terms = [total_assigned * 10000] # Ana hedefe yüksek ağırlık
+
+    # 2. İkincil Hedef: Derslik kullanımını dengele (Sadece 'room' modunda)
+    # En yoğun kullanılan dersliğin yükünü minimize ederek dağılımı dengele
+    if mode == "room" and rooms:
+        if room_capacities is None: room_capacities = {}
+        room_usage_vars = []
+        for r_name in rooms:
+            # Bu derslikteki toplam ders sayısı
+            r_vars = [lessons[k] for k in lessons if k[3] == r_name]
+            
+            if r_vars:
+                cap = safe_int(room_capacities.get(r_name), 1)
+                max_possible = num_hours * 5 * cap
+                r_usage = model.NewIntVar(0, max_possible, f"usage_{r_name}")
+                model.Add(r_usage == sum(r_vars))
+                room_usage_vars.append(r_usage)
+        
+        if room_usage_vars:
+            max_room_load = model.NewIntVar(0, num_hours * 5 * 100, "max_room_load")
+            model.AddMaxEquality(max_room_load, room_usage_vars)
+            objective_terms.append(-max_room_load)
+
+    model.Maximize(sum(objective_terms))
 
     # --- Çözüm ---
     if progress_callback: progress_callback(90, "Çözüm aranıyor (Bu işlem veri boyutuna göre sürebilir)...")
