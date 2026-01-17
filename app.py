@@ -1232,8 +1232,23 @@ if menu == "Tanımlamalar":
             df_teachers = pd.DataFrame(st.session_state.teachers)
             if "duty_place" not in df_teachers.columns: df_teachers["duty_place"] = ""
             if "gender" not in df_teachers.columns: df_teachers["gender"] = "Erkek"
-            if "unwanted_duty_places" not in df_teachers.columns: df_teachers["unwanted_duty_places"] = [[] for _ in range(len(df_teachers))]
+            if "unwanted_duty_places" not in df_teachers.columns: 
+                df_teachers["unwanted_duty_places"] = [[] for _ in range(len(df_teachers))]
             if "title" not in df_teachers.columns: df_teachers["title"] = "Öğretmen"
+            
+            # PyArrow uyumluluğu için veri tiplerini garantiye al
+            # 1. Liste olması gereken sütunlar
+            for col in ["unavailable_days", "unavailable_slots", "unwanted_duty_places"]:
+                if col in df_teachers.columns:
+                    df_teachers[col] = df_teachers[col].apply(lambda x: x if isinstance(x, list) else [])
+            
+            # 2. duty_day (TextColumn olduğu için stringe çeviriyoruz, kaydederken geri çevireceğiz)
+            if "duty_day" in df_teachers.columns:
+                def fmt_duty(x):
+                    if isinstance(x, list): return ", ".join(x)
+                    if pd.isna(x) or x == "Yok": return ""
+                    return str(x)
+                df_teachers["duty_day"] = df_teachers["duty_day"].apply(fmt_duty)
             
         edited_teachers = st.data_editor(
             df_teachers,
@@ -1270,10 +1285,14 @@ if menu == "Tanımlamalar":
             if "title" in cleaned_df.columns:
                 cleaned_df["title"] = cleaned_df["title"].astype(str).str.strip()
             
-            # Nöbet günü listesini string olarak göstermek için TextColumn kullandık,
-            # ancak kaydederken veri yapısını bozmamak lazım.
-            # data_editor, TextColumn olduğu için listeyi stringe çevirmiş olabilir.
-            # Burada karmaşıklığı önlemek için duty_day'i ellemiyoruz (disabled yaptık).
+            # duty_day string'den listeye geri çevir
+            if "duty_day" in cleaned_df.columns:
+                def parse_duty(x):
+                    if not x: return []
+                    if isinstance(x, str):
+                        return [d.strip() for d in x.split(",") if d.strip()]
+                    return []
+                cleaned_df["duty_day"] = cleaned_df["duty_day"].apply(parse_duty)
             
             st.session_state.teachers = cleaned_df.where(pd.notnull(cleaned_df), None).to_dict("records")
             save_data()
