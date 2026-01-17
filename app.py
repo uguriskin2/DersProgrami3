@@ -1917,9 +1917,9 @@ elif menu == "Program Oluştur":
             if curr_lunch not in lunch_opts: curr_lunch = "Yok"
             new_lunch_hour = col_t6.selectbox("Öğle Arası (Hangi Ders Boş?)", lunch_opts, index=lunch_opts.index(curr_lunch))
             
-            col_dr1, col_dr2 = st.columns(2)
-            duty_reduction = col_dr1.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
-            min_daily = col_dr2.slider("Öğretmen Günlük Min. Ders (Geldiği Gün)", min_value=1, max_value=5, value=int(lc.get("min_daily_hours", 2)), help="Öğretmen okula geldiği gün en az kaç saat dersi olsun?")
+            # col_dr1, col_dr2 = st.columns(2)
+            # duty_reduction = col_dr1.slider("Nöbet Günü Ders Yükü Azaltma (Saat)", min_value=0, max_value=8, value=int(lc.get("duty_day_reduction", 2)), help="Öğretmenin nöbetçi olduğu gün, günlük maksimum ders saatinden kaç saat daha az ders verileceğini belirler.")
+            min_daily = st.slider("Öğretmen Günlük Min. Ders (Geldiği Gün)", min_value=1, max_value=5, value=int(lc.get("min_daily_hours", 2)), help="Öğretmen okula geldiği gün en az kaç saat dersi olsun?")
 
             st.session_state.lesson_config = {
                 "start_time": new_start,
@@ -1928,7 +1928,7 @@ elif menu == "Program Oluştur":
                 "lunch_duration": new_lunch_dur,
                 "num_hours": new_num_hours,
                 "lunch_break_hour": new_lunch_hour,
-                "duty_day_reduction": duty_reduction,
+                "duty_day_reduction": 0, # Nöbet kısıtlaması kaldırıldı
                 "min_daily_hours": min_daily
             }
         

@@ -465,36 +465,37 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                     penalties.append(violation * 5000)
                     penalty_tracking.append((violation, f"Blok Süresi İhlali: {c_name} - {crs_name} - {d}"))
 
-    # 13. ÖĞRETMEN NÖBET GÜNÜ YÜKÜNÜ HAFİFLETME
-    # Nöbetçi olduğu gün, günlük maksimum ders saatinden 2 saat daha az ders verilsin.
-    for t in teachers:
-        if not t.get('name'): continue
-        t_name = str(t['name']).strip()
-        d_raw = t.get('duty_day')
-        
-        # Nöbet gününü listeye çevir (Çoklu gün desteği)
-        d_days = []
-        if isinstance(d_raw, list):
-            d_days = d_raw
-        elif isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]:
-            d_days = [d_raw]
-        
-        for d_day in d_days:
-            duty_vars = []
-            for key, var in lessons.items():
-                if key[2] == t_name and key[4] == d_day:
-                    duty_vars.append(var)
-            
-            if duty_vars:
-                limit = teacher_max_hours.get(t_name, 8)
-                # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
-                reduced_limit = max(0, limit - duty_day_reduction)
-                
-                # Kısıtlamayı yumuşat: İhlal durumunda ceza puanı ekle (Çözümsüzlüğü önlemek için)
-                excess = model.NewIntVar(0, num_hours, f"duty_excess_{t_name}_{d_day}")
-                model.Add(sum(duty_vars) <= reduced_limit + excess)
-                penalties.append(excess * 2000) # Ceza puanı (Ders atamaktan daha düşük öncelikli)
-                penalty_tracking.append((excess, f"Nöbet Günü Yükü Aşımı: {t_name} - {d_day} (Fazla: {{}} saat)"))
+    # 13. KISITLAMA KALDIRILDI: ÖĞRETMEN NÖBET GÜNÜ YÜKÜNÜ HAFİFLETME
+    # Dağıtımın daha rahat yapılması için nöbet günü kısıtlaması devre dışı bırakıldı.
+    # Nöbetler dağıtım sonrası ayarlanacak.
+    # for t in teachers:
+    #     if not t.get('name'): continue
+    #     t_name = str(t['name']).strip()
+    #     d_raw = t.get('duty_day')
+    #     
+    #     # Nöbet gününü listeye çevir (Çoklu gün desteği)
+    #     d_days = []
+    #     if isinstance(d_raw, list):
+    #         d_days = d_raw
+    #     elif isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]:
+    #         d_days = [d_raw]
+    #     
+    #     for d_day in d_days:
+    #         duty_vars = []
+    #         for key, var in lessons.items():
+    #             if key[2] == t_name and key[4] == d_day:
+    #                 duty_vars.append(var)
+    #         
+    #         if duty_vars:
+    #             limit = teacher_max_hours.get(t_name, 8)
+    #             # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
+    #             reduced_limit = max(0, limit - duty_day_reduction)
+    #             
+    #             # Kısıtlamayı yumuşat: İhlal durumunda ceza puanı ekle (Çözümsüzlüğü önlemek için)
+    #             excess = model.NewIntVar(0, num_hours, f"duty_excess_{t_name}_{d_day}")
+    #             model.Add(sum(duty_vars) <= reduced_limit + excess)
+    #             penalties.append(excess * 2000) # Ceza puanı (Ders atamaktan daha düşük öncelikli)
+    #             penalty_tracking.append((excess, f"Nöbet Günü Yükü Aşımı: {t_name} - {d_day} (Fazla: {{}} saat)"))
 
     # 14. ÖĞRETMEN SABAH/ÖĞLE TERCİHİ (SABAHÇI / ÖĞLENCİ)
     for t in teachers:
@@ -753,14 +754,14 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
             t_cap -= valid_un_slots_count
             
             # Nöbet Günü Düşümü (Kapasiteyi etkiler)
-            duty_deduction = 0
-            d_raw = t.get('duty_day')
-            d_days_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw and d_raw not in ["Yok", ""] else [])
-            
-            for d_d in d_days_list:
-                if d_d not in un_days and d_d in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]:
-                    duty_deduction += duty_day_reduction
-            t_cap -= duty_deduction
+            # duty_deduction = 0
+            # d_raw = t.get('duty_day')
+            # d_days_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw and d_raw not in ["Yok", ""] else [])
+            # 
+            # for d_d in d_days_list:
+            #     if d_d not in un_days and d_d in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]:
+            #         duty_deduction += duty_day_reduction
+            # t_cap -= duty_deduction
 
             if t_load > t_cap:
                 details = f"Gün: {working_days}, Günlük Limit: {effective_daily}"
@@ -769,13 +770,13 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 suggestions = []
                 if working_days < 5: suggestions.append("İzin gününü kaldır")
                 if effective_daily < daily_slots: suggestions.append("Günlük limiti artır")
-                if duty_deduction > 0: suggestions.append("Nöbeti kaldır")
+                # if duty_deduction > 0: suggestions.append("Nöbeti kaldır")
                 if valid_un_slots_count > 0: suggestions.append("Kısıtlı saatleri aç")
                 
                 suggestion_text = " | ".join(suggestions) if suggestions else "Ders yükünü azalt"
 
                 if valid_un_slots_count > 0: details += f", Kısıtlı Saat: {valid_un_slots_count}"
-                if duty_deduction > 0: details += f", Nöbet Düşümü: {duty_deduction}"
+                # if duty_deduction > 0: details += f", Nöbet Düşümü: {duty_deduction}"
                 hints.append(f"🔴 {t_name}: Atanan {t_load} > Müsait {t_cap} ({details})\n   💡 ÖNERİ: {suggestion_text}")
 
         # 3. Sınıf Yükü Kontrolü
