@@ -626,6 +626,14 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
 
     # Hafta Döngüsü
     for w in range(num_weeks):
+        # VP Rotasyonu
+        current_week_vps = vice_principals
+        if rotate_weekly and vice_principals:
+            vp_list_ordered = [vice_principals.get(d, "") for d in days]
+            shift = w % len(days)
+            rotated_vp_list = vp_list_ordered[-shift:] + vp_list_ordered[:-shift]
+            current_week_vps = {d: rotated_vp_list[i] for i, d in enumerate(days)}
+
         # Rotasyon (İlk hafta hariç)
         if w > 0 and rotate_weekly:
             for d in days:
@@ -676,7 +684,7 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
             def print_header_row():
                 # Başlık yüksekliğini içeriğe göre ayarla (Tarih ve Müdür Yrd varsa artır)
                 header_height = 10
-                if start_date or (vice_principals and any(vice_principals.values())):
+                if start_date or (current_week_vps and any(current_week_vps.values())):
                     header_height = 20
                 
                 pdf.set_font(font_family, 'B', 10)
@@ -690,7 +698,7 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
                     pdf.rect(x_curr, y_curr, w_day, header_height)
                     
                     # İçerik
-                    vp_text = vice_principals.get(d, "") if vice_principals else ""
+                    vp_text = current_week_vps.get(d, "") if current_week_vps else ""
                     date_text = ""
                     if start_date and current_monday:
                         d_obj = current_monday + timedelta(days=i)
