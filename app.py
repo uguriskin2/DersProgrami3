@@ -1146,15 +1146,25 @@ if menu == "Tanımlamalar":
 
     with tab1: # Branşlar
         st.info("Branşları aşağıdaki tablodan ekleyebilir, düzenleyebilir veya silebilirsiniz.")
+        search_branch = st.text_input("Branş Ara", key="search_branch")
         df_branches = pd.DataFrame(st.session_state.branches, columns=["Branş"])
-        edited_branches = st.data_editor(df_branches, num_rows="dynamic", width="stretch", key="editor_branches")
+        
+        if search_branch:
+            df_filtered_branches = df_branches[df_branches["Branş"].str.contains(search_branch, case=False, na=False)]
+        else:
+            df_filtered_branches = df_branches
+            
+        edited_branches = st.data_editor(df_filtered_branches, num_rows="dynamic", width="stretch", key="editor_branches", hide_index=True)
         if st.button("Branşları Kaydet", key="save_branches"):
-            st.session_state.branches = edited_branches["Branş"].dropna().astype(str).tolist()
+            df_rest = df_branches.drop(df_filtered_branches.index)
+            df_final = pd.concat([df_rest, edited_branches], ignore_index=True)
+            st.session_state.branches = df_final["Branş"].dropna().astype(str).tolist()
             save_data()
             st.success("Branş listesi güncellendi.")
 
     with tab2: # Derslikler
         st.info("Derslikleri, kapasitelerini, izin verilen branşları ve öğretmenleri yönetebilirsiniz.")
+        search_room = st.text_input("Derslik Ara", key="search_room")
         
         # Mevcut veriyi tablo formatına getir
         room_data = []
@@ -1168,9 +1178,14 @@ if menu == "Tanımlamalar":
             })
             
         df_rooms = pd.DataFrame(room_data) if room_data else pd.DataFrame(columns=["Derslik", "Kapasite", "İzin Verilen Branşlar", "İzin Verilen Öğretmenler", "İzin Verilen Dersler"])
+        
+        if search_room:
+            df_filtered_rooms = df_rooms[df_rooms["Derslik"].str.contains(search_room, case=False, na=False)]
+        else:
+            df_filtered_rooms = df_rooms
 
         edited_rooms = st.data_editor(
-            df_rooms, 
+            df_filtered_rooms, 
             column_config={
                 "Kapasite": st.column_config.NumberColumn("Kapasite", min_value=1, max_value=10, default=1, help="Bu derslikte aynı anda kaç sınıfın ders yapabileceğini belirtir. (Genellikle 1)"),
                 "İzin Verilen Branşlar": st.column_config.ListColumn("İzin Verilen Branşlar", help="Bu dersliği kullanabilecek branşları seçin."),
@@ -1179,11 +1194,14 @@ if menu == "Tanımlamalar":
             },
             num_rows="dynamic", 
             width="stretch", 
-            key="editor_rooms"
+            key="editor_rooms",
+            hide_index=True
         )
         if st.button("Derslikleri Kaydet", key="save_rooms"):
+            df_rest = df_rooms.drop(df_filtered_rooms.index)
+            df_final = pd.concat([df_rest, edited_rooms], ignore_index=True)
             # Verileri session state'e aktar
-            valid_rows = edited_rooms.dropna(subset=["Derslik"])
+            valid_rows = df_final.dropna(subset=["Derslik"])
             st.session_state.rooms = valid_rows["Derslik"].astype(str).tolist()
             st.session_state.room_capacities = {str(row["Derslik"]): int(row.get("Kapasite", 1)) for _, row in valid_rows.iterrows()}
             st.session_state.room_branches = {str(row["Derslik"]): row.get("İzin Verilen Branşlar", []) for _, row in valid_rows.iterrows()}
@@ -1228,6 +1246,10 @@ if menu == "Tanımlamalar":
 
     with tab3: # Öğretmenler
         st.info("Öğretmen bilgilerini tablodan düzenleyebilirsiniz.")
+        col_t1, col_t2 = st.columns([3, 1])
+        search_teacher = col_t1.text_input("Öğretmen Ara (Ad)", key="search_teacher")
+        filter_branch = col_t2.selectbox("Branş Filtrele", ["Tümü"] + sorted(st.session_state.branches), key="filter_teacher_branch")
+        
         # Veri yapısını garantiye al
         for t in st.session_state.teachers:
             if "unavailable_slots" not in t: t["unavailable_slots"] = []
@@ -1264,8 +1286,16 @@ if menu == "Tanımlamalar":
                     return str(x)
                 df_teachers["duty_day"] = df_teachers["duty_day"].apply(fmt_duty)
             
+        df_filtered_teachers = df_teachers
+        if filter_branch != "Tümü":
+            df_filtered_teachers = df_filtered_teachers[df_filtered_teachers["branch"] == filter_branch]
+
+        if search_teacher:
+            mask = df_filtered_teachers["name"].str.contains(search_teacher, case=False, na=False)
+            df_filtered_teachers = df_filtered_teachers[mask]
+            
         edited_teachers = st.data_editor(
-            df_teachers,
+            df_filtered_teachers,
             column_config={
                 "name": "Adı Soyadı",
                 "branch": st.column_config.SelectboxColumn("Branş", options=st.session_state.branches, required=True),
@@ -1283,11 +1313,15 @@ if menu == "Tanımlamalar":
             },
             num_rows="dynamic",
             width="stretch",
-            key="editor_teachers"
+            key="editor_teachers",
+            hide_index=True
         )
         if st.button("Öğretmenleri Kaydet", key="save_teachers"):
+            df_rest = df_teachers.drop(df_filtered_teachers.index)
+            df_final = pd.concat([df_rest, edited_teachers], ignore_index=True)
+            
             # NaN değerleri temizle ve kaydet
-            cleaned_df = edited_teachers.copy()
+            cleaned_df = df_final.copy()
             if "name" in cleaned_df.columns:
                 cleaned_df["name"] = cleaned_df["name"].astype(str).str.strip()
             if "email" in cleaned_df.columns:
@@ -1397,6 +1431,10 @@ if menu == "Tanımlamalar":
 
     with tab4: # Dersler
         st.info("Dersleri tablodan düzenleyebilirsiniz.")
+        col_c1, col_c2 = st.columns([3, 1])
+        search_course = col_c1.text_input("Ders Ara", key="search_course")
+        filter_course_branch = col_c2.selectbox("Branş Filtrele", ["Tümü"] + sorted(st.session_state.branches), key="filter_course_branch")
+        
         if not st.session_state.courses:
             df_courses = pd.DataFrame(columns=["name", "branch", "max_daily_hours", "specific_room", "block_size"])
         else:
@@ -1404,8 +1442,16 @@ if menu == "Tanımlamalar":
             if "block_size" not in df_courses.columns:
                 df_courses["block_size"] = 1
             
+        df_filtered_courses = df_courses
+        if filter_course_branch != "Tümü":
+            df_filtered_courses = df_filtered_courses[df_filtered_courses["branch"] == filter_course_branch]
+
+        if search_course:
+            mask = df_filtered_courses["name"].str.contains(search_course, case=False, na=False)
+            df_filtered_courses = df_filtered_courses[mask]
+            
         edited_courses = st.data_editor(
-            df_courses,
+            df_filtered_courses,
             column_config={
                 "name": "Ders Adı",
                 "branch": st.column_config.SelectboxColumn("Branş", options=st.session_state.branches, required=True),
@@ -1415,15 +1461,19 @@ if menu == "Tanımlamalar":
             },
             num_rows="dynamic",
             width="stretch",
-            key="editor_courses"
+            key="editor_courses",
+            hide_index=True
         )
         if st.button("Dersleri Kaydet", key="save_courses"):
-            st.session_state.courses = edited_courses.where(pd.notnull(edited_courses), None).to_dict("records")
+            df_rest = df_courses.drop(df_filtered_courses.index)
+            df_final = pd.concat([df_rest, edited_courses], ignore_index=True)
+            st.session_state.courses = df_final.where(pd.notnull(df_final), None).to_dict("records")
             save_data()
             st.success("Ders listesi güncellendi.")
 
     with tab5: # Sınıflar
         st.info("Sınıfları ve sınıf öğretmenlerini aşağıdaki tablodan yönetebilirsiniz.")
+        search_class = st.text_input("Sınıf Ara", key="search_class")
         
         class_data = []
         for c in st.session_state.classes:
@@ -1434,19 +1484,27 @@ if menu == "Tanımlamalar":
         
         df_classes = pd.DataFrame(class_data) if class_data else pd.DataFrame(columns=["Sınıf", "Sınıf Öğretmeni"])
         teacher_names = [t['name'] for t in st.session_state.teachers]
+        
+        if search_class:
+            df_filtered_classes = df_classes[df_classes["Sınıf"].str.contains(search_class, case=False, na=False)]
+        else:
+            df_filtered_classes = df_classes
 
         edited_classes = st.data_editor(
-            df_classes,
+            df_filtered_classes,
             column_config={
                 "Sınıf": st.column_config.TextColumn("Sınıf Adı", required=True),
                 "Sınıf Öğretmeni": st.column_config.SelectboxColumn("Sınıf Öğretmeni", options=teacher_names, required=False)
             },
             num_rows="dynamic",
             width="stretch",
-            key="editor_classes"
+            key="editor_classes",
+            hide_index=True
         )
         if st.button("Sınıfları Kaydet", key="save_classes"):
-            valid_rows = edited_classes.dropna(subset=["Sınıf"])
+            df_rest = df_classes.drop(df_filtered_classes.index)
+            df_final = pd.concat([df_rest, edited_classes], ignore_index=True)
+            valid_rows = df_final.dropna(subset=["Sınıf"])
             st.session_state.classes = valid_rows["Sınıf"].astype(str).tolist()
             st.session_state.class_teachers = {
                 row["Sınıf"]: row["Sınıf Öğretmeni"] 
@@ -1505,6 +1563,22 @@ elif menu == "Ders Atama & Kopyalama":
         # Seçilen derse göre branşı ve öğretmenleri bul
         course_branch = next((c['branch'] for c in st.session_state.courses if c['name'] == f_course), None)
         filtered_teachers = [t['name'] for t in st.session_state.teachers if t['branch'] == course_branch]
+        
+        # Öğretmen seçimini form dışına alarak anlık yük gösterimi sağlıyoruz
+        f_teacher = st.selectbox(
+            "Öğretmen Seç", 
+            filtered_teachers if filtered_teachers else ["Öğretmen Bulunamadı"],
+            format_func=lambda x: f"{x} ({teacher_loads.get(x, 0)} Saat)" if x in teacher_loads else x,
+            key="select_teacher_assign"
+        )
+        
+        if f_teacher and f_teacher != "Öğretmen Bulunamadı":
+            curr_load = teacher_loads.get(f_teacher, 0)
+            # Renkli gösterim
+            if curr_load >= 30:
+                st.warning(f"⚠️ **{f_teacher}** Toplam Yük: **{curr_load}** Saat (Yoğun)")
+            else:
+                st.info(f"ℹ️ **{f_teacher}** Toplam Yük: **{curr_load}** Saat")
 
         with st.form("add_lesson"):
             st.write(f"Seçilen Ders: **{f_course}** ({course_branch})")
@@ -1518,12 +1592,6 @@ elif menu == "Ders Atama & Kopyalama":
             if is_split:
                 split_label = col_f2.text_input("Etiket (Örn: Grup A, Etüt)", placeholder="Grup A")
                 st.caption("ℹ️ Aynı derse 2. öğretmeni atamak için buraya farklı bir etiket yazın (Örn: 'Grup B').")
-            
-            f_teacher = st.selectbox(
-                "Öğretmen Seç", 
-                filtered_teachers if filtered_teachers else ["Öğretmen Bulunamadı"],
-                format_func=lambda x: f"{x} ({teacher_loads.get(x, 0)} Saat)" if x in teacher_loads else x
-            )
             
             if st.form_submit_button("Ata"):
                 final_course_name = f"{f_course} ({split_label})" if is_split and split_label else f_course
@@ -1567,6 +1635,14 @@ elif menu == "Ders Atama & Kopyalama":
         
         df_assign = pd.DataFrame(data) if data else pd.DataFrame(columns=["Ders", "Saat", "Öğretmen"])
         
+        search_assign = st.text_input("Atama Ara (Ders veya Öğretmen)", key=f"search_assign_{selected_class}")
+        if search_assign:
+            mask = df_assign["Ders"].str.contains(search_assign, case=False, na=False) | \
+                   df_assign["Öğretmen"].str.contains(search_assign, case=False, na=False)
+            df_filtered_assign = df_assign[mask]
+        else:
+            df_filtered_assign = df_assign
+
         # Tablo düzenleyicide "Ders" sütunu için seçenekleri hazırla
         # Hem ana dersleri hem de şu an atanmış (bölünmüş/etiketli) dersleri içermeli
         base_course_names = [c['name'] for c in st.session_state.courses]
@@ -1574,7 +1650,7 @@ elif menu == "Ders Atama & Kopyalama":
         all_course_options = sorted(list(set(base_course_names + assigned_course_names)))
         
         edited_assign = st.data_editor(
-            df_assign,
+            df_filtered_assign,
             column_config={
                 "Ders": st.column_config.SelectboxColumn("Ders", options=all_course_options, required=True),
                 "Saat": st.column_config.NumberColumn("Saat", min_value=1, max_value=10, required=True),
@@ -1582,14 +1658,18 @@ elif menu == "Ders Atama & Kopyalama":
             },
             num_rows="dynamic",
             width="stretch",
-            key=f"editor_assign_{selected_class}"
+            key=f"editor_assign_{selected_class}",
+            hide_index=True
         )
         
         if st.button("Değişiklikleri Kaydet", key=f"save_assign_{selected_class}"):
+            df_rest = df_assign.drop(df_filtered_assign.index)
+            df_final = pd.concat([df_rest, edited_assign], ignore_index=True)
+            
             new_lessons = {}
             new_assignments = {}
             
-            for _, row in edited_assign.iterrows():
+            for _, row in df_final.iterrows():
                 c_name = row["Ders"]
                 h_val = row["Saat"]
                 t_name = row["Öğretmen"]
@@ -1657,7 +1737,7 @@ elif menu == "Ders Atama & Kopyalama":
             class_preview = df_preview[df_preview["Sınıf"] == selected_class].copy()
             
             if not class_preview.empty:
-                class_preview["Ders_Hoca"] = class_preview["Ders"] + " (" + class_preview["Öğretmen"] + ")"
+                class_preview["Ders_Hoca"] = class_preview["Ders"] + "\n" + class_preview["Öğretmen"]
                 pivot = class_preview.pivot(index="Saat", columns="Gün", values="Ders_Hoca")
                 days_order = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
                 
@@ -1816,6 +1896,7 @@ elif menu == "Ders Atama & Kopyalama":
     st.info("Aşağıdaki tablodan tüm atamaları inceleyebilir, düzenleyebilir veya silebilirsiniz. Filtreleri kullanarak listeyi daraltabilirsiniz.")
     
     # --- Filtreler (Tüm Atamalar) ---
+    search_all = st.text_input("Genel Ara (Sınıf, Ders, Öğretmen)", key="search_all_assignments")
     col_f1, col_f2, col_f3 = st.columns(3)
     f_class = col_f1.multiselect("Sınıf Filtrele", st.session_state.classes, key="filter_all_class")
     f_course = col_f2.multiselect("Ders Filtrele", sorted([c['name'] for c in st.session_state.courses]), key="filter_all_course")
@@ -1836,6 +1917,12 @@ elif menu == "Ders Atama & Kopyalama":
     df_all = pd.DataFrame(all_assignments)
     
     # Filtreleri Uygula
+    if search_all:
+        mask = df_all["Sınıf"].str.contains(search_all, case=False, na=False) | \
+               df_all["Ders"].str.contains(search_all, case=False, na=False) | \
+               df_all["Öğretmen"].str.contains(search_all, case=False, na=False)
+        df_all = df_all[mask]
+
     if f_class:
         df_all = df_all[df_all["Sınıf"].isin(f_class)]
     if f_course:
@@ -1853,7 +1940,8 @@ elif menu == "Ders Atama & Kopyalama":
         },
         num_rows="dynamic",
         width="stretch",
-        key="editor_all_assignments"
+        key="editor_all_assignments",
+        hide_index=True
     )
     
     if st.button("Tüm Değişiklikleri Kaydet", key="save_all_assignments"):
@@ -2088,7 +2176,7 @@ elif menu == "Program Oluştur":
             st.info("✅ Programda herhangi bir çakışma (Öğretmen, Sınıf veya Derslik) tespit edilmedi.")
         
         # Tabloda göstermek için: Ders Adı (Öğretmen)
-        df["Ders_Hoca"] = df["Ders"] + " (" + df["Öğretmen"] + ")"
+        df["Ders_Hoca"] = df["Ders"] + "\n" + df["Öğretmen"]
         df["Sinif_Ders"] = df["Sınıf"] + " (" + df["Ders"] + ")"
         
         view = st.selectbox("Görünüm", ["Tüm Liste", "Sınıfa Göre", "Öğretmene Göre", "Dersliğe Göre"])
@@ -2712,6 +2800,7 @@ elif menu == "Nöbet İşlemleri":
             col_duty1, col_duty2, col_duty3 = st.columns([2, 1, 1])
             keep_existing = col_duty1.checkbox("Mevcut nöbet atamalarını koru (Sadece boş olanlara ata)", value=False)
             include_weekend_auto = col_duty1.checkbox("Hafta Sonu Dahil Et", value=False, key="inc_weekend_auto")
+            prevent_empty_day_duty = col_duty1.checkbox("Boş Günlere Nöbet Yazma", value=True, help="İşaretlenirse, ders programında dersi olmayan günlere nöbet yazılmaz.")
             
             total_teachers_count = len(st.session_state.teachers)
             default_max = (total_teachers_count // 5) + 1 if total_teachers_count > 0 else 5
@@ -2765,6 +2854,14 @@ elif menu == "Nöbet İşlemleri":
                     for t in teachers_to_process:
                         unavailable = t.get('unavailable_days', []) or []
                         valid_days = [d for d in days if d not in unavailable]
+                        
+                        # Boş Gün Kontrolü (Dersi olmayan güne nöbet yazma)
+                        if prevent_empty_day_duty and teacher_daily_loads:
+                            t_name = t.get('name')
+                            if t_name:
+                                # Öğretmenin dersi olan günleri al
+                                days_with_lessons = teacher_daily_loads.get(t_name, {}).keys()
+                                valid_days = [d for d in valid_days if d in days_with_lessons]
                         
                         # Kapasite kontrolü: Sadece limiti aşmamış günleri aday yap
                         available_candidates = [d for d in valid_days if day_counts[d] < target_per_day]

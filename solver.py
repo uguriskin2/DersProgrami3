@@ -447,38 +447,6 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                     domain = cp_model.Domain.FromValues(allowed_durations)
                     model.AddLinearExpressionInDomain(daily_sum, domain)
 
-    # 13. KISITLAMA KALDIRILDI: ÖĞRETMEN NÖBET GÜNÜ YÜKÜNÜ HAFİFLETME
-    # Dağıtımın daha rahat yapılması için nöbet günü kısıtlaması devre dışı bırakıldı.
-    # Nöbetler dağıtım sonrası ayarlanacak.
-    # for t in teachers:
-    #     if not t.get('name'): continue
-    #     t_name = str(t['name']).strip()
-    #     d_raw = t.get('duty_day')
-    #     
-    #     # Nöbet gününü listeye çevir (Çoklu gün desteği)
-    #     d_days = []
-    #     if isinstance(d_raw, list):
-    #         d_days = d_raw
-    #     elif isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]:
-    #         d_days = [d_raw]
-    #     
-    #     for d_day in d_days:
-    #         duty_vars = []
-    #         for key, var in lessons.items():
-    #             if key[2] == t_name and key[4] == d_day:
-    #                 duty_vars.append(var)
-    #         
-    #         if duty_vars:
-    #             limit = teacher_max_hours.get(t_name, 8)
-    #             # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
-    #             reduced_limit = max(0, limit - duty_day_reduction)
-    #             
-    #             # Kısıtlamayı yumuşat: İhlal durumunda ceza puanı ekle (Çözümsüzlüğü önlemek için)
-    #             excess = model.NewIntVar(0, num_hours, f"duty_excess_{t_name}_{d_day}")
-    #             model.Add(sum(duty_vars) <= reduced_limit + excess)
-    #             penalties.append(excess * 2000) # Ceza puanı (Ders atamaktan daha düşük öncelikli)
-    #             penalty_tracking.append((excess, f"Nöbet Günü Yükü Aşımı: {t_name} - {d_day} (Fazla: {{}} saat)"))
-
     # 14. ÖĞRETMEN SABAH/ÖĞLE TERCİHİ (SABAHÇI / ÖĞLENCİ)
     for t in teachers:
         pref = t.get('preference')
