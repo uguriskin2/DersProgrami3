@@ -20,10 +20,10 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     
     # class_lessons temizliği (Sayısal değerleri garantiye al)
     clean_class_lessons = {}
-    for c, courses in class_lessons.items():
+    for c, c_lessons in class_lessons.items():
         clean_class_lessons[c] = {}
-        if courses:
-            for crs, cnt in courses.items():
+        if c_lessons:
+            for crs, cnt in c_lessons.items():
                 clean_class_lessons[c][crs] = safe_int(cnt, 0)
     class_lessons = clean_class_lessons
 
@@ -45,7 +45,11 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     # Tüm olası kombinasyonlar için değişken oluştur
     
     # --- Yardımcı: Ders Özelliklerini Çözümle (Etiketli dersler için) ---
-    course_def_map = {c['name']: c for c in courses}
+    course_def_map = {}
+    if courses:
+        for c in courses:
+            if isinstance(c, dict) and c.get('name'):
+                course_def_map[c['name']] = c
     
     def get_base_name(crs_name):
         if crs_name in course_def_map:
@@ -533,8 +537,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
         
         # Toplam yükü hesapla
         t_load = 0
-        for c_name, courses in class_lessons.items():
-            for crs_name, count in courses.items():
+        for c_name, course_dict in class_lessons.items():
+            for crs_name, count in course_dict.items():
                 if assignments.get(c_name, {}).get(crs_name) == t_name:
                     t_load += int(count)
         
@@ -562,8 +566,8 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
         
         # Toplam ders yükünü hesapla
         t_load = 0
-        for c_name, courses in class_lessons.items():
-            for crs_name, count in courses.items():
+        for c_name, course_dict in class_lessons.items():
+            for crs_name, count in course_dict.items():
                 if assignments.get(c_name, {}).get(crs_name) == t_name:
                     t_load += int(count)
         
