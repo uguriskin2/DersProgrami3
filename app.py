@@ -630,11 +630,23 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
         # VP Rotasyonu
         current_week_vps = vice_principals
         if rotate_weekly and vice_principals:
-            vp_list_ordered = [vice_principals.get(d, "") for d in days]
-            d_q = deque(vp_list_ordered)
-            d_q.rotate(-w)
-            rotated_vp_list = list(d_q)
-            current_week_vps = {d: rotated_vp_list[i] for i, d in enumerate(days)}
+            # Benzersiz kişileri bul ve onları kendi aralarında döndür (Pattern korumak için)
+            base_vps_list = [vice_principals.get(d, "") for d in days]
+            unique_vps = []
+            for vp in base_vps_list:
+                if vp and vp not in unique_vps:
+                    unique_vps.append(vp)
+            
+            if unique_vps:
+                d_q = deque(unique_vps)
+                d_q.rotate(-w)
+                rotated_unique = list(d_q)
+                vp_map = {old: new for old, new in zip(unique_vps, rotated_unique)}
+                
+                current_week_vps = {}
+                for d in days:
+                    old_vp = vice_principals.get(d, "")
+                    current_week_vps[d] = vp_map.get(old_vp, old_vp)
 
         # Rotasyon (İlk hafta hariç)
         if w > 0 and rotate_weekly:
