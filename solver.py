@@ -286,11 +286,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                     variables.append(var)
             
             if variables:
-                # model.Add(sum(variables) == 0) -> YUMUŞATILDI
-                violation = model.NewIntVar(0, len(variables), f"unavail_day_viol_{t_name}_{d}")
-                model.Add(sum(variables) == violation)
-                penalties.append(violation * 100000)
-                penalty_tracking.append((violation, f"İzinli Gün İhlali: {t_name} - {d} ({{}} ders)"))
+                model.Add(sum(variables) == 0)
 
     # 11. ÖĞRETMEN SAAT KISITLAMASI (Belirli saatlerde müsait değil)
     # Format: "Gün:Saat" (Örn: "Pazartesi:1")
@@ -306,9 +302,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 for key, var in lessons.items():
                     # key: (c_name, crs_name, t_name, r_name, d, h)
                     if key[2] == t_name and key[4] == d_str and key[5] == h_val:
-                        # model.Add(var == 0) -> YUMUŞATILDI
-                        penalties.append(var * 100000)
-                        penalty_tracking.append((var, f"Kısıtlı Saat İhlali: {t_name} - {d_str}:{h_val}"))
+                        model.Add(var == 0)
             except ValueError:
                 continue
 
@@ -404,9 +398,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
         for key, var in lessons.items():
             # key: (c_name, crs_name, t_name, r_name, d, h)
             if key[5] == lunch_break_hour:
-                # model.Add(var == 0) -> YUMUŞATILDI
-                penalties.append(var * 50000)
-                penalty_tracking.append((var, f"Öğle Arası İhlali: {key[0]} - {key[1]}"))
+                model.Add(var == 0)
 
     # 12. DERS BLOK (SABİT SÜRE) KISITLAMASI
     for c_name in classes:
@@ -453,17 +445,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                     
                     # Günlük toplam sadece izin verilen değerlerden biri olabilir (0, Blok, Kalan)
                     domain = cp_model.Domain.FromValues(allowed_durations)
-                    # model.AddLinearExpressionInDomain(daily_sum, domain) -> YUMUŞATILDI
-                    
-                    is_valid = model.NewBoolVar(f"valid_blk_{c_name}_{crs_name}_{d}")
-                    model.AddLinearExpressionInDomain(daily_sum, domain).OnlyEnforceIf(is_valid)
-                    
-                    violation = model.NewBoolVar(f"viol_blk_{c_name}_{crs_name}_{d}")
-                    model.Add(is_valid == 0).OnlyEnforceIf(violation)
-                    model.Add(is_valid == 1).OnlyEnforceIf(violation.Not())
-                    
-                    penalties.append(violation * 5000)
-                    penalty_tracking.append((violation, f"Blok Süresi İhlali: {c_name} - {crs_name} - {d}"))
+                    model.AddLinearExpressionInDomain(daily_sum, domain)
 
     # 13. KISITLAMA KALDIRILDI: ÖĞRETMEN NÖBET GÜNÜ YÜKÜNÜ HAFİFLETME
     # Dağıtımın daha rahat yapılması için nöbet günü kısıtlaması devre dışı bırakıldı.
@@ -685,6 +667,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     # --- Çözüm ---
     if progress_callback: progress_callback(90, "Çözüm aranıyor (Bu işlem veri boyutuna göre sürebilir)...")
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 60.0 # Zaman aşımı limiti
     status = solver.Solve(model)
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:

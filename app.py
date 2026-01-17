@@ -2719,6 +2719,19 @@ elif menu == "Nöbet İşlemleri":
             
             if col_duty3.button("Nöbetleri Dağıt", key="btn_auto_duty"):
                 days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+
+                # 1. Ders yüklerini hesapla (Döngüden önce)
+                teacher_daily_loads = {} # {t_name: {day: count}}
+                if 'last_schedule' in st.session_state and st.session_state.last_schedule:
+                    df_sched = pd.DataFrame(st.session_state.last_schedule)
+                    if not df_sched.empty and "Öğretmen" in df_sched.columns and "Gün" in df_sched.columns:
+                        load_counts = df_sched.groupby(['Öğretmen', 'Gün']).size().reset_index(name='count')
+                        for _, row in load_counts.iterrows():
+                            t_name, day, count = row['Öğretmen'], row['Gün'], row['count']
+                            if t_name not in teacher_daily_loads:
+                                teacher_daily_loads[t_name] = {}
+                            teacher_daily_loads[t_name][day] = count
+
                 if include_weekend_auto:
                     days.extend(["Cumartesi", "Pazar"])
                 day_counts = {d: 0 for d in days}
@@ -2726,15 +2739,20 @@ elif menu == "Nöbet İşlemleri":
                 # Mevcut dolulukları hesapla (Eğer koruma açıksa)
                 if keep_existing:
                     for t in st.session_state.teachers:
-                        d = t.get('duty_day')
-                        if d in days:
-                            day_counts[d] += 1
+                        d_raw = t.get('duty_day')
+                        d_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw and d_raw not in ["Yok", ""] else [])
+                        for d in d_list:
+                            if d in days:
+                                day_counts[d] += 1
                 
                 # İşlenecek öğretmenleri belirle
                 teachers_to_process = []
                 for t in st.session_state.teachers:
-                    if keep_existing and t.get('duty_day') in days:
-                        continue
+                    if keep_existing:
+                        d_raw = t.get('duty_day')
+                        d_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw and d_raw not in ["Yok", ""] else [])
+                        if any(d in days for d in d_list):
+                            continue
                     teachers_to_process.append(t)
                 
                 # Karıştır (Adil dağılım için)
@@ -2751,18 +2769,42 @@ elif menu == "Nöbet İşlemleri":
                     available_candidates = [d for d in valid_days if day_counts[d] < target_per_day]
                     
                     if available_candidates:
-                        # En az yoğun olan günlerden rastgele birini seç
-                        min_count = min(day_counts[d] for d in available_candidates)
-                        candidates = [d for d in available_candidates if day_counts[d] == min_count]
-                        selected_day = random.choice(candidates)
+                        # 1. Adım: Nöbetçi sayısı en az olan günleri bul (Dengeleme için)
+                        min_duty_count = min(day_counts[d] for d in available_candidates)
+                        best_days_by_duty = [d for d in available_candidates if day_counts[d] == min_duty_count]
                         
-                        t['duty_day'] = selected_day
-                        day_counts[selected_day] += 1
-                        assigned_count += 1
+                        # 2. Adım: Bu günler arasından, öğretmenin ders yükü en az olanı seç
+                        selected_day = None
+                        if len(best_days_by_duty) == 1:
+                            selected_day = best_days_by_duty[0]
+                        else:
+                            min_lesson_load = float('inf')
+                            best_day_by_lesson = []
+                            t_loads = teacher_daily_loads.get(t['name'], {})
+                            
+                            for d in best_days_by_duty:
+                                load = t_loads.get(d, 0)
+                                if load < min_lesson_load:
+                                    min_lesson_load = load
+                                    best_day_by_lesson = [d]
+                                elif load == min_lesson_load:
+                                    best_day_by_lesson.append(d)
+                            
+                            # Eşitlik durumunda rastgele seç
+                            if best_day_by_lesson:
+                                selected_day = random.choice(best_day_by_lesson)
+
+                        if selected_day:
+                            t['duty_day'] = [selected_day] # Tek gün ata (liste formatında)
+                            day_counts[selected_day] += 1
+                            assigned_count += 1
+                        else:
+                            if not keep_existing: t['duty_day'] = []
+                            unassigned_count += 1
                     else:
                         # Uygun gün yok veya kontenjan dolu
                         if not keep_existing:
-                            t['duty_day'] = "Yok"
+                            t['duty_day'] = []
                         unassigned_count += 1
                 
                 save_data()
