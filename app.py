@@ -3010,8 +3010,25 @@ elif menu == "Hızlı Düzenle":
     st.header("Hızlı Düzenleme")
     if st.session_state.teachers:
         st.write("Öğretmenler")
+        
+        # Veri Hazırlığı (PyArrow hatasını önlemek için)
+        df_teachers_fast = pd.DataFrame(st.session_state.teachers)
+        
+        # Liste sütunlarını garantiye al
+        for col in ["unavailable_days", "unavailable_slots", "unwanted_duty_places"]:
+            if col in df_teachers_fast.columns:
+                df_teachers_fast[col] = df_teachers_fast[col].apply(lambda x: x if isinstance(x, list) else [])
+        
+        # duty_day'i string'e çevir (Çoklu gün desteği için TextColumn kullanacağız)
+        if "duty_day" in df_teachers_fast.columns:
+            def fmt_duty(x):
+                if isinstance(x, list): return ", ".join(x)
+                if pd.isna(x) or x == "Yok": return ""
+                return str(x)
+            df_teachers_fast["duty_day"] = df_teachers_fast["duty_day"].apply(fmt_duty)
+
         new_df = st.data_editor(
-            pd.DataFrame(st.session_state.teachers),
+            df_teachers_fast,
             column_config={
                 "unavailable_days": st.column_config.ListColumn(
                     "İzin Günleri",
@@ -3029,9 +3046,9 @@ elif menu == "Hızlı Düzenle":
                     max_value=8,
                     width="small"
                 ),
-                "duty_day": st.column_config.SelectboxColumn(
+                "duty_day": st.column_config.TextColumn(
                     "Nöbet Günü",
-                    options=["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Yok"],
+                    help="Birden fazla gün için virgülle ayırın (Örn: Pazartesi, Salı)",
                     width="medium"
                 ),
                 "preference": st.column_config.SelectboxColumn(
@@ -3043,8 +3060,19 @@ elif menu == "Hızlı Düzenle":
             num_rows="dynamic"
         )
         if st.button("Öğretmenleri Kaydet"):
-            st.session_state.teachers = new_df.where(pd.notnull(new_df), None).to_dict('records')
+            # Kaydederken duty_day'i tekrar listeye çevir
+            cleaned_df = new_df.copy()
+            if "duty_day" in cleaned_df.columns:
+                def parse_duty(x):
+                    if not x: return []
+                    if isinstance(x, str):
+                        return [d.strip() for d in x.split(",") if d.strip()]
+                    return []
+                cleaned_df["duty_day"] = cleaned_df["duty_day"].apply(parse_duty)
+            
+            st.session_state.teachers = cleaned_df.where(pd.notnull(cleaned_df), None).to_dict('records')
             save_data()
+            st.success("Hızlı düzenleme kaydedildi.")
 
     if st.session_state.courses:
         st.divider()
