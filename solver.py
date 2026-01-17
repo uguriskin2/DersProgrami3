@@ -434,20 +434,26 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     for t in teachers:
         if not t.get('name'): continue
         t_name = str(t['name']).strip()
-        d_day = t.get('duty_day')
+        d_raw = t.get('duty_day')
         
-        if not d_day or d_day in [None, "Yok", ""]: continue
+        # Nöbet gününü listeye çevir (Çoklu gün desteği)
+        d_days = []
+        if isinstance(d_raw, list):
+            d_days = d_raw
+        elif isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]:
+            d_days = [d_raw]
         
-        duty_vars = []
-        for key, var in lessons.items():
-            if key[2] == t_name and key[4] == d_day:
-                duty_vars.append(var)
-        
-        if duty_vars:
-            limit = teacher_max_hours.get(t_name, 8)
-            # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
-            reduced_limit = max(0, limit - duty_day_reduction)
-            model.Add(sum(duty_vars) <= reduced_limit)
+        for d_day in d_days:
+            duty_vars = []
+            for key, var in lessons.items():
+                if key[2] == t_name and key[4] == d_day:
+                    duty_vars.append(var)
+            
+            if duty_vars:
+                limit = teacher_max_hours.get(t_name, 8)
+                # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
+                reduced_limit = max(0, limit - duty_day_reduction)
+                model.Add(sum(duty_vars) <= reduced_limit)
 
     # 14. ÖĞRETMEN SABAH/ÖĞLE TERCİHİ (SABAHÇI / ÖĞLENCİ)
     for t in teachers:
