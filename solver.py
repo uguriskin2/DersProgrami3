@@ -5,6 +5,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     mode: "class" (Sınıf bazlı dağıtım) veya "room" (Derslik bazlı dağıtım)
     """
     model = cp_model.CpModel()
+    penalties = [] # Yumuşak kısıtlamalar için ceza listesi
     
     def safe_int(val, default):
         try:
@@ -457,7 +458,11 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 limit = teacher_max_hours.get(t_name, 8)
                 # Nöbet gününde belirtilen miktar kadar daha az ders ver (Min 0)
                 reduced_limit = max(0, limit - duty_day_reduction)
-                model.Add(sum(duty_vars) <= reduced_limit)
+                
+                # Kısıtlamayı yumuşat: İhlal durumunda ceza puanı ekle (Çözümsüzlüğü önlemek için)
+                excess = model.NewIntVar(0, num_hours, f"duty_excess_{t_name}_{d_day}")
+                model.Add(sum(duty_vars) <= reduced_limit + excess)
+                penalties.append(excess * 2000) # Ceza puanı (Ders atamaktan daha düşük öncelikli)
 
     # 14. ÖĞRETMEN SABAH/ÖĞLE TERCİHİ (SABAHÇI / ÖĞLENCİ)
     for t in teachers:
@@ -601,6 +606,9 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     # 1. Ana Hedef: Toplam atanan ders sayısını maksimize et
     total_assigned = sum(lessons.values())
     objective_terms = [total_assigned * 10000] # Ana hedefe yüksek ağırlık
+    
+    if penalties:
+        objective_terms.append(-sum(penalties))
 
     # 2. İkincil Hedef: Derslik kullanımını dengele (Sadece 'room' modunda)
     # En yoğun kullanılan dersliğin yükünü minimize ederek dağılımı dengele
@@ -693,10 +701,13 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
             
             # Nöbet Günü Düşümü (Kapasiteyi etkiler)
             duty_deduction = 0
-            d_day = t.get('duty_day')
-            if d_day and d_day not in un_days and d_day in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]:
-                duty_deduction = duty_day_reduction
-                t_cap -= duty_deduction
+            d_raw = t.get('duty_day')
+            d_days_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw and d_raw not in ["Yok", ""] else [])
+            
+            for d_d in d_days_list:
+                if d_d not in un_days and d_d in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]:
+                    duty_deduction += duty_day_reduction
+            t_cap -= duty_deduction
 
             if t_load > t_cap:
                 details = f"Gün: {working_days}, Günlük Limit: {effective_daily}"
