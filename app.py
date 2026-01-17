@@ -632,7 +632,7 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
         if rotate_weekly and vice_principals:
             vp_list_ordered = [vice_principals.get(d, "") for d in days]
             d_q = deque(vp_list_ordered)
-            d_q.rotate(w)
+            d_q.rotate(-w)
             rotated_vp_list = list(d_q)
             current_week_vps = {d: rotated_vp_list[i] for i, d in enumerate(days)}
 
