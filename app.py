@@ -1994,7 +1994,7 @@ elif menu == "Program Oluştur":
         clean_room_excluded = {k: (v if v is not None else []) for k, v in st.session_state.get('room_excluded_courses', {}).items()}
 
         try:
-            schedule, msg = create_timetable(
+            schedule, msg, violations = create_timetable(
                 st.session_state.teachers, st.session_state.courses, st.session_state.classes,
                 st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
                 room_capacities=st.session_state.room_capacities,
@@ -2011,7 +2011,7 @@ elif menu == "Program Oluştur":
         except TypeError as e:
             if "unexpected keyword argument" in str(e):
                 try:
-                    schedule, msg = create_timetable(
+                    schedule, msg, violations = create_timetable(
                         st.session_state.teachers, st.session_state.courses, st.session_state.classes,
                         st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
                         room_capacities=st.session_state.room_capacities,
@@ -2026,7 +2026,7 @@ elif menu == "Program Oluştur":
                     )
                 except TypeError as e2:
                     if "unexpected keyword argument" in str(e2):
-                        schedule, msg = create_timetable(
+                        schedule, msg, violations = create_timetable(
                             st.session_state.teachers, st.session_state.courses, st.session_state.classes,
                             st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
                             room_capacities=st.session_state.room_capacities,
@@ -2050,6 +2050,11 @@ elif menu == "Program Oluştur":
             st.session_state.last_schedule = schedule
             save_data()
             st.success(msg)
+            
+            if violations:
+                with st.expander("⚠️ İhlal Edilen Kurallar (Esnetilen Kısıtlamalar)", expanded=True):
+                    for v in violations:
+                        st.warning(v)
             
             # Eksik Ders Kontrolü (Yerleştirilemeyenler)
             scheduled_lessons = set()

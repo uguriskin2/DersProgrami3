@@ -6,6 +6,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     """
     model = cp_model.CpModel()
     penalties = [] # Yumuşak kısıtlamalar için ceza listesi
+    penalty_tracking = [] # İhlalleri raporlamak için (Variable, Description Template)
     
     def safe_int(val, default):
         try:
@@ -205,8 +206,12 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 # Kapasite aşımı varsa zorlama, yapabildiğin kadar yap
                 model.Add(sum(lesson_vars) <= count)
             else:
-                # Kapasite yetiyorsa tam sayıya zorla
-                model.Add(sum(lesson_vars) == count)
+                # Kapasite yetiyorsa tam sayıya zorla -> YUMUŞATILDI
+                # model.Add(sum(lesson_vars) == count)
+                missing_lesson = model.NewIntVar(0, count, f"missing_{c_name}_{crs_name}")
+                model.Add(sum(lesson_vars) + missing_lesson == count)
+                penalties.append(missing_lesson * 500000) # En yüksek öncelik: Dersin atanması
+                penalty_tracking.append((missing_lesson, f"Ders Atanamadı: {c_name} - {crs_name} (Eksik: {{}} saat)"))
 
     # 2. Bir sınıf aynı anda sadece 1 derste olabilir
     for c_name in classes:
@@ -314,7 +319,11 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                     daily_vars.append(var)
             
             if daily_vars:
-                model.Add(sum(daily_vars) <= limit)
+                # model.Add(sum(daily_vars) <= limit) -> YUMUŞATILDI
+                excess_daily = model.NewIntVar(0, num_hours, f"excess_daily_{t_name}_{d}")
+                model.Add(sum(daily_vars) <= limit + excess_daily)
+                penalties.append(excess_daily * 50000) # Günlük limit aşımı cezası
+                penalty_tracking.append((excess_daily, f"Öğretmen Günlük Limit Aşımı: {t_name} - {d} (Fazla: {{}} saat)"))
 
     # 7. BLOK DERS KISITLAMASI (Aynı gün içindeki dersler birbirini takip etmeli)
     if progress_callback: progress_callback(60, "Blok ders ve süreklilik kuralları uygulanıyor...")
@@ -377,7 +386,11 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                             daily_vars.append(lessons[key])
                 
                 if daily_vars:
-                    model.Add(sum(daily_vars) <= limit)
+                    # model.Add(sum(daily_vars) <= limit) -> YUMUŞATILDI
+                    excess_course = model.NewIntVar(0, num_hours, f"excess_course_{c_name}_{crs_name}_{d}")
+                    model.Add(sum(daily_vars) <= limit + excess_course)
+                    penalties.append(excess_course * 10000)
+                    penalty_tracking.append((excess_course, f"Ders Günlük Limit Aşımı: {c_name} - {crs_name} - {d} (Fazla: {{}} saat)"))
 
     # 9. ÖĞLE ARASI KISITLAMASI
     if lunch_break_hour:
@@ -463,6 +476,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 excess = model.NewIntVar(0, num_hours, f"duty_excess_{t_name}_{d_day}")
                 model.Add(sum(duty_vars) <= reduced_limit + excess)
                 penalties.append(excess * 2000) # Ceza puanı (Ders atamaktan daha düşük öncelikli)
+                penalty_tracking.append((excess, f"Nöbet Günü Yükü Aşımı: {t_name} - {d_day} (Fazla: {{}} saat)"))
 
     # 14. ÖĞRETMEN SABAH/ÖĞLE TERCİHİ (SABAHÇI / ÖĞLENCİ)
     for t in teachers:
@@ -598,8 +612,12 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 model.Add(daily_sum > 0).OnlyEnforceIf(is_present)
                 model.Add(daily_sum == 0).OnlyEnforceIf(is_present.Not())
                 
-                # is_present -> daily_sum >= effective_min
-                model.Add(daily_sum >= effective_min).OnlyEnforceIf(is_present)
+                # is_present -> daily_sum >= effective_min -> YUMUŞATILDI
+                # model.Add(daily_sum >= effective_min).OnlyEnforceIf(is_present)
+                slack = model.NewIntVar(0, effective_min, f"min_daily_slack_{t_name}_{d}")
+                model.Add(daily_sum + slack >= effective_min).OnlyEnforceIf(is_present)
+                penalties.append(slack * 5000)
+                penalty_tracking.append((slack, f"Öğretmen Günlük Min. Ders İhlali: {t_name} - {d} (Eksik: {{}} saat)"))
 
     # --- Amaç Fonksiyonu ---
     # Gevşetilmiş kısıtlamalar (<=) kullanıldığında boş program dönmemesi için atamayı maksimize et
@@ -650,7 +668,12 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                     "Gün": key[4],
                     "Saat": key[5]
                 })
-        return schedule, "Çözüm Bulundu!"
+        
+        violations = []
+        for var, desc in penalty_tracking:
+            if solver.Value(var) > 0:
+                violations.append(desc.format(solver.Value(var)))
+        return schedule, "Çözüm Bulundu!", violations
     else:
         # --- Hata Analizi ve İpuçları ---
         hints = []
@@ -735,4 +758,4 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
         if hints:
             msg += "\n\n🔍 Olası Sorunlar:\n" + "\n".join(hints)
             
-        return [], msg
+        return [], msg, []
