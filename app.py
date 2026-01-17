@@ -2016,7 +2016,6 @@ elif menu == "Program Oluştur":
                 "lunch_duration": new_lunch_dur,
                 "num_hours": new_num_hours,
                 "lunch_break_hour": new_lunch_hour,
-                "duty_day_reduction": 0, # Nöbet kısıtlaması kaldırıldı
                 "min_daily_hours": min_daily
             }
         
@@ -2092,7 +2091,6 @@ elif menu == "Program Oluştur":
                 room_excluded_courses=clean_room_excluded,
                 mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
                 simultaneous_lessons=st.session_state.simultaneous_lessons,
-                duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
                 min_daily_hours=st.session_state.lesson_config.get("min_daily_hours", 2),
                 progress_callback=update_progress
             )
@@ -2109,7 +2107,6 @@ elif menu == "Program Oluştur":
                         room_excluded_courses=clean_room_excluded,
                         mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
                         simultaneous_lessons=st.session_state.simultaneous_lessons,
-                        duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
                         min_daily_hours=st.session_state.lesson_config.get("min_daily_hours", 2)
                     )
                 except TypeError as e2:
@@ -2124,7 +2121,6 @@ elif menu == "Program Oluştur":
                             room_excluded_courses=clean_room_excluded,
                             mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
                             simultaneous_lessons=st.session_state.simultaneous_lessons,
-                            duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2)
                         )
                     else:
                         raise e2

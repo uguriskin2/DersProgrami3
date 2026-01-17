@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 
-def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, duty_day_reduction=2, min_daily_hours=2, progress_callback=None):
+def create_timetable(teachers, courses, classes, class_lessons, assignments, rooms, room_capacities=None, room_branches=None, room_teachers=None, room_courses=None, room_excluded_courses=None, mode="class", lunch_break_hour=None, num_hours=8, simultaneous_lessons=None, min_daily_hours=2, progress_callback=None):
     """
     mode: "class" (Sınıf bazlı dağıtım) veya "room" (Derslik bazlı dağıtım)
     """
@@ -17,7 +17,6 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
             return default
 
     # Girdi Temizliği (TypeError önlemek için)
-    duty_day_reduction = safe_int(duty_day_reduction, 2)
     min_daily_hours = safe_int(min_daily_hours, 2)
     
     # class_lessons temizliği (Sayısal değerleri garantiye al)
@@ -518,46 +517,6 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                         if vars_c1 and vars_c2:
                             model.Add(sum(vars_c1) == sum(vars_c2))
 
-    # 16. ÖĞRETMENLERİN BOŞ GÜNÜ OLMASIN (Müsait günlere yayma)
-    # Kullanıcı talebi: "öğretmenlerin boş günlerini (izin günleri haricinde) OLUŞTURMA"
-    # Eğer öğretmenin ders yükü, müsait olduğu gün sayısını karşılıyorsa, her müsait güne en az 1 ders koy.
-    for t in teachers:
-        if not t.get('name'): continue
-        t_name = str(t['name']).strip()
-        
-        # Toplam yükü hesapla
-        t_load = 0
-        for c_name, course_dict in class_lessons.items():
-            for crs_name, count in course_dict.items():
-                if assignments.get(c_name, {}).get(crs_name) == t_name:
-                    t_load += int(count)
-        
-        if t_load == 0: continue
-
-        un_days = t.get('unavailable_days', []) or []
-        avail_days = [d for d in days if d not in un_days]
-        
-        # Eğer ders sayısı gün sayısına yetiyorsa kısıtlamayı ekle
-        if t_load >= len(avail_days):
-            for d in avail_days:
-                daily_vars = []
-                for key, var in lessons.items():
-                    if key[2] == t_name and key[4] == d:
-                        daily_vars.append(var)
-                
-                if daily_vars:
-                    # model.Add(sum(daily_vars) >= 1) -> YUMUŞATILDI
-                    has_lesson = model.NewBoolVar(f"has_lesson_{t_name}_{d}")
-                    model.Add(sum(daily_vars) >= 1).OnlyEnforceIf(has_lesson)
-                    model.Add(sum(daily_vars) == 0).OnlyEnforceIf(has_lesson.Not())
-                    
-                    violation = model.NewBoolVar(f"empty_day_viol_{t_name}_{d}")
-                    model.Add(has_lesson == 0).OnlyEnforceIf(violation)
-                    model.Add(has_lesson == 1).OnlyEnforceIf(violation.Not())
-                    
-                    penalties.append(violation * 50000)
-                    penalty_tracking.append((violation, f"Boş Gün Kuralı İhlali: {t_name} - {d}"))
-
     # 17. ÖĞRETMEN GÜNLÜK DERS YÜKÜ DENGESİ (Min-Max)
     # Eğer öğretmen o gün okula geliyorsa, en az X saat dersi olsun.
     for t in teachers:
@@ -636,6 +595,7 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     if progress_callback: progress_callback(90, "Çözüm aranıyor (Bu işlem veri boyutuna göre sürebilir)...")
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 60.0 # Zaman aşımı limiti
+    solver.parameters.num_search_workers = 8 # Paralel işlem (Hızlandırma)
     status = solver.Solve(model)
 
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
@@ -704,15 +664,6 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                         valid_un_slots_count += 1
             t_cap -= valid_un_slots_count
             
-            # Nöbet Günü Düşümü (Kapasiteyi etkiler)
-            # duty_deduction = 0
-            # d_raw = t.get('duty_day')
-            # d_days_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw and d_raw not in ["Yok", ""] else [])
-            # 
-            # for d_d in d_days_list:
-            #     if d_d not in un_days and d_d in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]:
-            #         duty_deduction += duty_day_reduction
-            # t_cap -= duty_deduction
 
             if t_load > t_cap:
                 details = f"Gün: {working_days}, Günlük Limit: {effective_daily}"
@@ -727,7 +678,6 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
                 suggestion_text = " | ".join(suggestions) if suggestions else "Ders yükünü azalt"
 
                 if valid_un_slots_count > 0: details += f", Kısıtlı Saat: {valid_un_slots_count}"
-                # if duty_deduction > 0: details += f", Nöbet Düşümü: {duty_deduction}"
                 hints.append(f"🔴 {t_name}: Atanan {t_load} > Müsait {t_cap} ({details})\n   💡 ÖNERİ: {suggestion_text}")
 
         # 3. Sınıf Yükü Kontrolü
