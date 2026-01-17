@@ -606,27 +606,12 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
         pdf.add_page()
         
         # Tarih Başlığı Hesapla
-        week_dates = {}
         title_suffix = ""
+        current_monday = None
         if start_date:
             current_monday = start_date + timedelta(weeks=w)
             friday = current_monday + timedelta(days=4)
             title_suffix = f" ({current_monday.strftime('%d.%m.%Y')} - {friday.strftime('%d.%m.%Y')})"
-            
-            for i, d_name in enumerate(days):
-                d_obj = current_monday + timedelta(days=i)
-                vp_name = vice_principals.get(d_name, "") if vice_principals else ""
-                header_text = f"{d_name}\n{d_obj.strftime('%d.%m.%Y')}"
-                if vp_name:
-                    header_text += f"\n{vp_name}"
-                week_dates[d_name] = header_text
-        else:
-            for d_name in days:
-                vp_name = vice_principals.get(d_name, "") if vice_principals else ""
-                header_text = d_name
-                if vp_name:
-                    header_text += f"\n{vp_name}"
-                week_dates[d_name] = header_text
 
         pdf.week_title = f"Nöbet Çizelgesi{title_suffix}"
         # Başlığı manuel tekrar yazdır (add_page sonrası header otomatik çalışır ama title güncellemesi için)
@@ -641,25 +626,56 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
             w_place = 50
             w_day = 45
             
-            # Tablo Başlığı
-            x_start = pdf.get_x()
-            y_start = pdf.get_y()
-            
-            # Başlık yüksekliğini içeriğe göre ayarla (Tarih ve Müdür Yrd varsa artır)
-            header_height = 10
-            if start_date or (vice_principals and any(vice_principals.values())):
-                header_height = 20
-            
-            pdf.cell(w_place, header_height, clean_text("Nöbet Yeri"), 1, 0, 'C')
-            for d in days:
-                # Çok satırlı başlık (Tarih varsa)
-                x_curr = pdf.get_x()
-                y_curr = pdf.get_y()
-                pdf.multi_cell(w_day, 5, clean_text(week_dates[d]), 1, 'C')
-                pdf.set_xy(x_curr + w_day, y_curr)
-            pdf.ln(header_height) 
-            
-            pdf.set_font(font_family, '', 9)
+            def print_header_row():
+                # Başlık yüksekliğini içeriğe göre ayarla (Tarih ve Müdür Yrd varsa artır)
+                header_height = 10
+                if start_date or (vice_principals and any(vice_principals.values())):
+                    header_height = 20
+                
+                pdf.set_font(font_family, 'B', 10)
+                pdf.cell(w_place, header_height, clean_text("Nöbet Yeri"), 1, 0, 'C')
+                
+                for i, d in enumerate(days):
+                    x_curr = pdf.get_x()
+                    y_curr = pdf.get_y()
+                    
+                    # Çerçeve
+                    pdf.rect(x_curr, y_curr, w_day, header_height)
+                    
+                    # İçerik
+                    vp_text = vice_principals.get(d, "") if vice_principals else ""
+                    date_text = ""
+                    if start_date and current_monday:
+                        d_obj = current_monday + timedelta(days=i)
+                        date_text = d_obj.strftime('%d.%m.%Y')
+                    
+                    # 1. Gün Adı
+                    pdf.set_font(font_family, 'B', 10)
+                    pdf.set_xy(x_curr, y_curr + 2)
+                    pdf.cell(w_day, 5, clean_text(d), 0, 0, 'C')
+                    
+                    next_y = y_curr + 7
+                    # 2. Tarih
+                    if date_text:
+                        pdf.set_font(font_family, '', 8)
+                        pdf.set_xy(x_curr, next_y)
+                        pdf.cell(w_day, 5, clean_text(date_text), 0, 0, 'C')
+                        next_y += 5
+                    
+                    # 3. Müdür Yrd (Renkli ve Kalın)
+                    if vp_text:
+                        pdf.set_font(font_family, 'B', 8)
+                        pdf.set_text_color(180, 0, 0) # Koyu Kırmızı
+                        pdf.set_xy(x_curr, next_y)
+                        pdf.cell(w_day, 5, clean_text(vp_text), 0, 0, 'C')
+                        pdf.set_text_color(0, 0, 0)
+                    
+                    pdf.set_xy(x_curr + w_day, y_curr)
+                
+                pdf.ln(header_height)
+                pdf.set_font(font_family, '', 9)
+
+            print_header_row()
             
             for place in all_places:
                 day_teachers = {d: [] for d in days}
@@ -684,16 +700,7 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
                 # Sayfa sonu kontrolü (Basit)
                 if pdf.get_y() + row_height > 180: # Sayfa boyutu A4 Landscape ~210mm yükseklik
                     pdf.add_page()
-                    # Başlıkları tekrar bas (Basitleştirilmiş)
-                    pdf.set_font(font_family, 'B', 10)
-                    pdf.cell(w_place, header_height, clean_text("Nöbet Yeri"), 1, 0, 'C')
-                    for d in days:
-                        x_curr = pdf.get_x()
-                        y_curr = pdf.get_y()
-                        pdf.multi_cell(w_day, 5, clean_text(week_dates[d]), 1, 'C')
-                        pdf.set_xy(x_curr + w_day, y_curr)
-                    pdf.ln(header_height)
-                    pdf.set_font(font_family, '', 9)
+                    print_header_row()
 
                 x_start = pdf.get_x()
                 y_start = pdf.get_y()
@@ -1160,14 +1167,16 @@ if menu == "Tanımlamalar":
             if "phone" not in t: t["phone"] = ""
             if "gender" not in t: t["gender"] = "Erkek"
             if "unwanted_duty_places" not in t: t["unwanted_duty_places"] = []
+            if "title" not in t: t["title"] = "Öğretmen"
             
         if not st.session_state.teachers:
-            df_teachers = pd.DataFrame(columns=["name", "branch", "gender", "email", "phone", "unavailable_days", "unavailable_slots", "max_hours_per_day", "duty_day", "duty_place", "unwanted_duty_places", "preference"])
+            df_teachers = pd.DataFrame(columns=["name", "branch", "title", "gender", "email", "phone", "unavailable_days", "unavailable_slots", "max_hours_per_day", "duty_day", "duty_place", "unwanted_duty_places", "preference"])
         else:
             df_teachers = pd.DataFrame(st.session_state.teachers)
             if "duty_place" not in df_teachers.columns: df_teachers["duty_place"] = ""
             if "gender" not in df_teachers.columns: df_teachers["gender"] = "Erkek"
             if "unwanted_duty_places" not in df_teachers.columns: df_teachers["unwanted_duty_places"] = [[] for _ in range(len(df_teachers))]
+            if "title" not in df_teachers.columns: df_teachers["title"] = "Öğretmen"
             
         edited_teachers = st.data_editor(
             df_teachers,
@@ -1175,6 +1184,7 @@ if menu == "Tanımlamalar":
                 "name": "Adı Soyadı",
                 "branch": st.column_config.SelectboxColumn("Branş", options=st.session_state.branches, required=True),
                 "gender": st.column_config.SelectboxColumn("Cinsiyet", options=["Erkek", "Kadın"], required=False),
+                "title": st.column_config.SelectboxColumn("Unvan", options=["Öğretmen", "Müdür Yardımcısı", "Müdür"], required=True, default="Öğretmen"),
                 "email": st.column_config.TextColumn("E-Posta", help="Ders programının gönderileceği e-posta adresi"),
                 "phone": st.column_config.TextColumn("Telefon", help="WhatsApp için 905xxxxxxxxx formatında"),
                 "unavailable_days": st.column_config.ListColumn("İzin Günleri", help="Müsait olunmayan günleri ekleyin"),
@@ -1200,6 +1210,8 @@ if menu == "Tanımlamalar":
                 cleaned_df["phone"] = cleaned_df["phone"].astype(str).str.strip()
             if "gender" in cleaned_df.columns:
                 cleaned_df["gender"] = cleaned_df["gender"].astype(str).str.strip()
+            if "title" in cleaned_df.columns:
+                cleaned_df["title"] = cleaned_df["title"].astype(str).str.strip()
             
             # Nöbet günü listesini string olarak göstermek için TextColumn kullandık,
             # ancak kaydederken veri yapısını bozmamak lazım.
@@ -2832,9 +2844,17 @@ elif menu == "Program Oluştur":
                 cols_vp = st.columns(5)
                 days_list = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
                 
+                # Müdür Yardımcılarını Filtrele
+                vp_list = [t['name'] for t in st.session_state.teachers if t.get('title') == "Müdür Yardımcısı"]
+                vp_options = [""] + sorted(vp_list)
+                
                 # Session state'den al ve güncelle
                 for i, d in enumerate(days_list):
-                    st.session_state.vice_principals[d] = cols_vp[i].text_input(d, value=st.session_state.vice_principals.get(d, ""), key=f"vp_input_{d}", placeholder="Müdür Yrd.")
+                    current_val = st.session_state.vice_principals.get(d, "")
+                    # Eğer kayıtlı değer listede yoksa (örn: silinmişse veya unvanı değişmişse) boş seç
+                    if current_val not in vp_options:
+                        current_val = ""
+                    st.session_state.vice_principals[d] = cols_vp[i].selectbox(d, options=vp_options, index=vp_options.index(current_val), key=f"vp_input_{d}")
 
                 if st.button("Müdür Yardımcılarını Kaydet", key="save_vps"):
                     save_data()
@@ -2951,6 +2971,7 @@ elif menu == "Veri İşlemleri":
                     t_data.append({
                         "Adı Soyadı": t.get('name'),
                         "Branş": t.get('branch'),
+                        "Unvan": t.get('title', 'Öğretmen'),
                         "Nöbet Günü": ", ".join(t.get('duty_day')) if isinstance(t.get('duty_day'), list) else t.get('duty_day'),
                         "Nöbet Yeri": t.get('duty_place'),
                         "Tercih": t.get('preference'),
@@ -3037,6 +3058,7 @@ elif menu == "Veri İşlemleri":
                             t_obj = {
                                 "name": str(row["Adı Soyadı"]).strip(),
                                 "branch": str(row["Branş"]).strip() if pd.notna(row["Branş"]) else "Genel",
+                                "title": str(row["Unvan"]).strip() if pd.notna(row.get("Unvan")) else "Öğretmen",
                                 "unavailable_days": [],
                                 "unavailable_slots": [],
                                 "max_hours_per_day": int(row["Günlük Max Ders"]) if pd.notna(row.get("Günlük Max Ders")) else 8,
