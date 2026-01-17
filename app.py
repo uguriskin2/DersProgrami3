@@ -1335,13 +1335,16 @@ if menu == "Tanımlamalar":
                 st.write(f"**{sel_t_name}** için izinli günleri seçiniz:")
                 new_days = st.multiselect("İzinli Günler", days, default=safe_current_days, key="ms_days_vis")
                 
-                # Grid verisini hazırla (8 saatlik varsayılan)
+                # Grid verisini hazırla
+                num_hours_cfg = int(st.session_state.lesson_config.get("num_hours", 8))
                 grid_data = []
-                for h in range(1, 9):
+                for h in range(1, num_hours_cfg + 1):
                     row = {"Saat": f"{h}. Ders"}
                     for d in days:
                         key = f"{d}:{h}"
-                        row[d] = key in current_slots
+                        # Gün izinliyse veya saat kısıtlıysa işaretle
+                        is_unavailable = (key in current_slots) or (d in new_days)
+                        row[d] = is_unavailable
                     grid_data.append(row)
                 
                 df_grid = pd.DataFrame(grid_data)
@@ -1359,17 +1362,34 @@ if menu == "Tanımlamalar":
                 
                 if st.button("Kısıtlamaları Güncelle", key="btn_update_vis"):
                     new_slots = []
+                    final_days = set(new_days)
+                    total_grid_hours = len(edited_grid)
+
                     for idx, row in edited_grid.iterrows():
                         h = idx + 1
                         for d in days:
                             if row[d]:
                                 new_slots.append(f"{d}:{h}")
+                            else:
+                                # Gridde saat açıldıysa günü izinli olmaktan çıkar
+                                if d in final_days:
+                                    final_days.remove(d)
+                    
+                    # Tüm saatler kapalıysa günü izinli yap
+                    for d in days:
+                        all_closed = True
+                        for h in range(1, total_grid_hours + 1):
+                            if f"{d}:{h}" not in new_slots:
+                                all_closed = False
+                                break
+                        if all_closed:
+                            final_days.add(d)
                     
                     # Session state güncelle
                     for t in st.session_state.teachers:
                         if t.get('name') == sel_t_name:
                             t['unavailable_slots'] = new_slots
-                            t['unavailable_days'] = new_days
+                            t['unavailable_days'] = list(final_days)
                             break
                     save_data()
                     st.success("Kısıtlamalar kaydedildi!")
