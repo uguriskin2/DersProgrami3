@@ -1699,19 +1699,36 @@ elif menu == "Program Oluştur":
             )
         except TypeError as e:
             if "unexpected keyword argument" in str(e):
-                schedule, msg = create_timetable(
-                    st.session_state.teachers, st.session_state.courses, st.session_state.classes,
-                    st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
-                    room_capacities=st.session_state.room_capacities,
-                    room_branches=clean_room_branches,
-                    room_teachers=clean_room_teachers,
-                    room_courses=clean_room_courses,
-                    room_excluded_courses=clean_room_excluded,
-                    mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
-                    simultaneous_lessons=st.session_state.simultaneous_lessons,
-                    duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
-                    min_daily_hours=st.session_state.lesson_config.get("min_daily_hours", 2)
-                )
+                try:
+                    schedule, msg = create_timetable(
+                        st.session_state.teachers, st.session_state.courses, st.session_state.classes,
+                        st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
+                        room_capacities=st.session_state.room_capacities,
+                        room_branches=clean_room_branches,
+                        room_teachers=clean_room_teachers,
+                        room_courses=clean_room_courses,
+                        room_excluded_courses=clean_room_excluded,
+                        mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
+                        simultaneous_lessons=st.session_state.simultaneous_lessons,
+                        duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2),
+                        min_daily_hours=st.session_state.lesson_config.get("min_daily_hours", 2)
+                    )
+                except TypeError as e2:
+                    if "unexpected keyword argument" in str(e2):
+                        schedule, msg = create_timetable(
+                            st.session_state.teachers, st.session_state.courses, st.session_state.classes,
+                            st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 
+                            room_capacities=st.session_state.room_capacities,
+                            room_branches=clean_room_branches,
+                            room_teachers=clean_room_teachers,
+                            room_courses=clean_room_courses,
+                            room_excluded_courses=clean_room_excluded,
+                            mode=solver_mode, lunch_break_hour=lunch_break_hour, num_hours=num_hours,
+                            simultaneous_lessons=st.session_state.simultaneous_lessons,
+                            duty_day_reduction=st.session_state.lesson_config.get("duty_day_reduction", 2)
+                        )
+                    else:
+                        raise e2
             else:
                 raise e
         
