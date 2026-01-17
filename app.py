@@ -1698,7 +1698,7 @@ elif menu == "Program Oluştur":
                 progress_callback=update_progress
             )
         except TypeError as e:
-            if "unexpected keyword argument 'progress_callback'" in str(e):
+            if "unexpected keyword argument" in str(e):
                 schedule, msg = create_timetable(
                     st.session_state.teachers, st.session_state.courses, st.session_state.classes,
                     st.session_state.class_lessons, st.session_state.assignments, st.session_state.rooms, 

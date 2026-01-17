@@ -22,8 +22,9 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
     clean_class_lessons = {}
     for c, courses in class_lessons.items():
         clean_class_lessons[c] = {}
-        for crs, cnt in courses.items():
-            clean_class_lessons[c][crs] = safe_int(cnt, 0)
+        if courses:
+            for crs, cnt in courses.items():
+                clean_class_lessons[c][crs] = safe_int(cnt, 0)
     class_lessons = clean_class_lessons
 
     # Veri Temizliği: Oda-Öğretmen eşleşmelerindeki isimleri temizle
