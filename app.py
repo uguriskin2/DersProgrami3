@@ -527,7 +527,7 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
         # FPDF 1.7.x için (string döner, encode gerekir)
         return pdf.output(dest='S').encode('latin-1', 'replace')
 
-def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_weekend=False):
+def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_weekend=False, rotate_weekly=False):
     if not FPDF: return None
     
     # Font Ayarları
@@ -603,8 +603,52 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
             used_places.add(t['duty_place'])
     all_places = sorted(list(set(places) | used_places))
     
+    # Öğretmenlerin nöbet durumlarını geçici bir yapıda tut (Rotasyon için)
+    # current_duties[t_name][day] = place
+    current_duties = {}
+    
+    for t in st.session_state.teachers:
+        t_name = t['name']
+        d_raw = t.get('duty_day')
+        place = t.get('duty_place')
+        
+        if isinstance(d_raw, str): d_list = [d_raw]
+        elif isinstance(d_raw, list): d_list = d_raw
+        else: d_list = []
+        
+        # Sadece geçerli günleri al
+        valid_days = [d for d in d_list if d in days]
+        
+        if valid_days and place:
+            current_duties[t_name] = {}
+            for d in valid_days:
+                current_duties[t_name][d] = place
+
     # Hafta Döngüsü
     for w in range(num_weeks):
+        # Rotasyon (İlk hafta hariç)
+        if w > 0 and rotate_weekly:
+            for d in days:
+                # O gün nöbetçi olanları ve yerlerini bul
+                day_assignments = [] # (t_name, place)
+                
+                # İsim sırasına göre al ki her seferinde aynı sırada olsun
+                sorted_teachers = sorted(current_duties.keys())
+                
+                for t_name in sorted_teachers:
+                    if d in current_duties[t_name]:
+                        day_assignments.append((t_name, current_duties[t_name][d]))
+                
+                if day_assignments:
+                    # Yerleri ayır
+                    places_on_day = [x[1] for x in day_assignments]
+                    # Kaydır (Sağa doğru 1 birim: Sonuncusu başa gelir)
+                    rotated_places = [places_on_day[-1]] + places_on_day[:-1]
+                    
+                    # Yeni yerleri ata
+                    for idx, (t_name, _) in enumerate(day_assignments):
+                        current_duties[t_name][d] = rotated_places[idx]
+
         # Tarih Başlığı Hesapla
         title_suffix = ""
         current_monday = None
@@ -682,16 +726,11 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_
             
             for place in all_places:
                 day_teachers = {d: [] for d in days}
-                for t in st.session_state.teachers:
-                    # Nöbet günü liste veya string olabilir, kontrol et
-                    t_days = t.get('duty_day')
-                    if isinstance(t_days, str): t_days = [t_days]
-                    elif not isinstance(t_days, list): t_days = []
-                    
-                    if t.get('duty_place') == place:
-                        for td in t_days:
-                            if td in days:
-                                day_teachers[td].append(t['name'])
+                # current_duties'den veriyi çek
+                for t_name, duties in current_duties.items():
+                    for d, p in duties.items():
+                        if p == place:
+                            day_teachers[d].append(t_name)
                 
                 max_lines = 1
                 for d in days:
@@ -2904,6 +2943,7 @@ elif menu == "Nöbet İşlemleri":
 
                 col_rep1, col_rep2, col_rep3 = st.columns(3)
                 use_dates = col_rep1.checkbox("Tarihli Çizelge Oluştur", value=False)
+                rotate_opt = col_rep1.checkbox("Her Hafta Yer Değiştir (Rotasyon)", value=False)
                 start_date = None
                 num_weeks = 1
                 if use_dates:
@@ -2919,7 +2959,7 @@ elif menu == "Nöbet İşlemleri":
                         
                     num_weeks = col_rep3.number_input("Hafta Sayısı (Örn: 4 hafta = 1 Ay)", min_value=1, max_value=10, value=4)
                 
-                pdf_duty = create_duty_pdf(start_date=start_date if use_dates else None, num_weeks=num_weeks, vice_principals=st.session_state.vice_principals, include_weekend=include_weekend_rep)
+                pdf_duty = create_duty_pdf(start_date=start_date if use_dates else None, num_weeks=num_weeks, vice_principals=st.session_state.vice_principals, include_weekend=include_weekend_rep, rotate_weekly=rotate_opt)
                 st.download_button("📄 Nöbet Çizelgesini PDF İndir", data=pdf_duty, file_name="nobet_cizelgesi.pdf", mime="application/pdf")
         else:
             st.info("Henüz nöbet yeri tanımlanmış öğretmen bulunmamaktadır.")
