@@ -14,6 +14,18 @@ def create_timetable(teachers, courses, classes, class_lessons, assignments, roo
         except:
             return default
 
+    # Girdi Temizliği (TypeError önlemek için)
+    duty_day_reduction = safe_int(duty_day_reduction, 2)
+    min_daily_hours = safe_int(min_daily_hours, 2)
+    
+    # class_lessons temizliği (Sayısal değerleri garantiye al)
+    clean_class_lessons = {}
+    for c, courses in class_lessons.items():
+        clean_class_lessons[c] = {}
+        for crs, cnt in courses.items():
+            clean_class_lessons[c][crs] = safe_int(cnt, 0)
+    class_lessons = clean_class_lessons
+
     # Veri Temizliği: Oda-Öğretmen eşleşmelerindeki isimleri temizle
     if progress_callback: progress_callback(5, "Veriler hazırlanıyor ve değişkenler oluşturuluyor...")
     
