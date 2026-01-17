@@ -2199,6 +2199,113 @@ elif menu == "Program Oluştur":
                 else:
                     st.info(f"{selected_view_t} isimli öğretmenin programda dersi bulunmamaktadır.")
 
+        # --- Manuel Program Düzenleme ---
+        if st.session_state.role == "admin":
+            st.divider()
+            st.subheader("✏️ Manuel Program Düzenleme")
+            st.info("Oluşturulan program üzerinde manuel değişiklik yapmak için bir öğretmen seçin. Hücrelerdeki dersleri değiştirebilir, silebilir veya yeni ders ekleyebilirsiniz.")
+
+            if 'last_schedule' in st.session_state and st.session_state.last_schedule:
+                # 1. Öğretmen Seçimi
+                all_teachers_edit = sorted([t['name'] for t in st.session_state.teachers])
+                edit_teacher = st.selectbox("Düzenlenecek Öğretmen", all_teachers_edit, key="manual_edit_teacher_select")
+                
+                # 2. Bu öğretmene ait dersleri bul (Dropdown seçenekleri için)
+                teacher_options = []
+                for c_name, courses in st.session_state.class_lessons.items():
+                    for crs_name, hours in courses.items():
+                        assigned_t = st.session_state.assignments.get(c_name, {}).get(crs_name)
+                        if assigned_t == edit_teacher:
+                            teacher_options.append(f"{c_name} - {crs_name}")
+                teacher_options = sorted(list(set(teacher_options)))
+                
+                # 3. Mevcut programı Grid formatına çevir
+                current_schedule = st.session_state.last_schedule
+                days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                
+                grid_data = []
+                for h in range(1, num_hours + 1):
+                    row = {"Saat": h}
+                    for d in days:
+                        found = None
+                        for item in current_schedule:
+                            if item["Öğretmen"] == edit_teacher and item["Gün"] == d and item["Saat"] == h:
+                                found = f"{item['Sınıf']} - {item['Ders']}"
+                                break
+                        row[d] = found
+                    grid_data.append(row)
+                    
+                df_grid = pd.DataFrame(grid_data)
+                
+                edited_grid = st.data_editor(
+                    df_grid,
+                    column_config={
+                        "Saat": st.column_config.NumberColumn("Saat", disabled=True),
+                        "Pazartesi": st.column_config.SelectboxColumn("Pazartesi", options=teacher_options, required=False),
+                        "Salı": st.column_config.SelectboxColumn("Salı", options=teacher_options, required=False),
+                        "Çarşamba": st.column_config.SelectboxColumn("Çarşamba", options=teacher_options, required=False),
+                        "Perşembe": st.column_config.SelectboxColumn("Perşembe", options=teacher_options, required=False),
+                        "Cuma": st.column_config.SelectboxColumn("Cuma", options=teacher_options, required=False),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key=f"manual_schedule_editor_{edit_teacher}"
+                )
+                
+                if st.button("Manuel Değişiklikleri Kaydet", key="btn_save_manual_edit"):
+                    # Oda bilgisini sakla
+                    room_map = {}
+                    for item in current_schedule:
+                        if item["Öğretmen"] == edit_teacher:
+                            room_map[(item["Sınıf"], item["Ders"])] = item.get("Derslik")
+
+                    # Diğer öğretmenlerin programı (Çakışma kontrolü için)
+                    other_teachers_schedule = [item for item in current_schedule if item["Öğretmen"] != edit_teacher]
+                    
+                    # Bu öğretmenin yeni programını hazırla
+                    proposed_teacher_schedule = []
+                    
+                    for _, row in edited_grid.iterrows():
+                        h = row["Saat"]
+                        for d in days:
+                            val = row[d]
+                            if val and " - " in val:
+                                c_name, crs_name = val.split(" - ", 1)
+                                room = room_map.get((c_name, crs_name))
+                                if not room:
+                                    course_cfg = next((c for c in st.session_state.courses if c["name"] == crs_name), None)
+                                    if course_cfg: room = course_cfg.get("specific_room")
+                                
+                                proposed_teacher_schedule.append({
+                                    "Sınıf": c_name,
+                                    "Ders": crs_name,
+                                    "Öğretmen": edit_teacher,
+                                    "Derslik": room,
+                                    "Gün": d,
+                                    "Saat": h
+                                })
+                    
+                    # Çakışma Kontrolü
+                    conflicts = []
+                    for new_item in proposed_teacher_schedule:
+                        # 1. Sınıf Çakışması: O saatte sınıfın başka dersi var mı?
+                        for existing in other_teachers_schedule:
+                            if (existing["Sınıf"] == new_item["Sınıf"] and 
+                                existing["Gün"] == new_item["Gün"] and 
+                                existing["Saat"] == new_item["Saat"]):
+                                conflicts.append(f"⚠️ Sınıf Çakışması: {new_item['Sınıf']} sınıfının {new_item['Gün']} {new_item['Saat']}. saatte {existing['Öğretmen']} ile dersi var.")
+
+                    if conflicts:
+                        st.error("Değişiklikler kaydedilmedi! Aşağıdaki çakışmalar tespit edildi:")
+                        for c in conflicts:
+                            st.write(c)
+                    else:
+                        # Kaydet
+                        st.session_state.last_schedule = other_teachers_schedule + proposed_teacher_schedule
+                        save_data()
+                        st.success(f"{edit_teacher} için program güncellendi!")
+                        st.rerun()
+
         # PDF İndirme Butonu
         if FPDF:
             st.divider()
