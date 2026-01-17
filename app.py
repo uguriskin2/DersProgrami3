@@ -527,7 +527,7 @@ def create_pdf_report(schedule_data, report_type="teacher", num_hours=8):
         # FPDF 1.7.x için (string döner, encode gerekir)
         return pdf.output(dest='S').encode('latin-1', 'replace')
 
-def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
+def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None, include_weekend=False):
     if not FPDF: return None
     
     # Font Ayarları
@@ -594,6 +594,8 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
             
     # Veriyi Hazırla
     days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+    if include_weekend:
+        days.extend(["Cumartesi", "Pazar"])
     places = sorted(st.session_state.get("duty_places", []))
     used_places = set()
     for t in st.session_state.teachers:
@@ -603,20 +605,17 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
     
     # Hafta Döngüsü
     for w in range(num_weeks):
-        pdf.add_page()
-        
         # Tarih Başlığı Hesapla
         title_suffix = ""
         current_monday = None
         if start_date:
             current_monday = start_date + timedelta(weeks=w)
-            friday = current_monday + timedelta(days=4)
-            title_suffix = f" ({current_monday.strftime('%d.%m.%Y')} - {friday.strftime('%d.%m.%Y')})"
+            days_to_add = 6 if include_weekend else 4
+            end_date = current_monday + timedelta(days=days_to_add)
+            title_suffix = f" ({current_monday.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')})"
 
         pdf.week_title = f"Nöbet Çizelgesi{title_suffix}"
-        # Başlığı manuel tekrar yazdır (add_page sonrası header otomatik çalışır ama title güncellemesi için)
-        # FPDF header'ı add_page içinde çağırdığı için, week_title'ı add_page'den önce set etmek yeterli.
-        # Ancak ilk sayfada header add_page ile basıldı.
+        pdf.add_page()
         
         if not all_places:
             pdf.set_font(font_family, '', 10)
@@ -625,6 +624,10 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
             pdf.set_font(font_family, 'B', 10)
             w_place = 50
             w_day = 45
+            
+            if include_weekend:
+                w_place = 40
+                w_day = 32
             
             def print_header_row():
                 # Başlık yüksekliğini içeriğe göre ayarla (Tarih ve Müdür Yrd varsa artır)
@@ -705,8 +708,15 @@ def create_duty_pdf(start_date=None, num_weeks=1, vice_principals=None):
                 x_start = pdf.get_x()
                 y_start = pdf.get_y()
                 
+                # Renk Ayarı (Pastel)
+                h_val = hashlib.md5(place.encode('utf-8')).hexdigest()
+                r = int(h_val[:2], 16) % 50 + 205
+                g = int(h_val[2:4], 16) % 50 + 205
+                b = int(h_val[4:6], 16) % 50 + 205
+                pdf.set_fill_color(r, g, b)
+                
                 # Nöbet Yeri
-                pdf.multi_cell(w_place, row_height, clean_text(place), 1, 'C')
+                pdf.multi_cell(w_place, row_height, clean_text(place), 1, 'C', fill=True)
                 
                 # Günler
                 for i, d in enumerate(days):
@@ -1062,16 +1072,16 @@ if st.sidebar.button("🚪 Çıkış Yap"):
 if st.session_state.get("role") == "admin":
     if st.sidebar.button("💾 Tüm Verileri Kaydet"):
         save_data()
-    menu_options = ["Tanımlamalar", "Ders Atama & Kopyalama", "Program Oluştur", "Hızlı Düzenle", "Veri İşlemleri"]
+    menu_options = ["Tanımlamalar", "Ders Atama & Kopyalama", "Program Oluştur", "Nöbet İşlemleri", "Hızlı Düzenle", "Veri İşlemleri"]
 else:
-    menu_options = ["Program Oluştur"]
+    menu_options = ["Program Oluştur", "Nöbet İşlemleri"]
 
 menu = st.sidebar.radio("Menü", menu_options)
 
 # --- 1. TANIMLAMALAR ---
 if menu == "Tanımlamalar":
     st.header("Veri Tanımlama Ekranı")
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Branşlar", "Derslikler", "Öğretmenler", "Dersler", "Sınıflar", "Nöbet Yerleri"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Branşlar", "Derslikler", "Öğretmenler", "Dersler", "Sınıflar"])
 
     with tab1: # Branşlar
         st.info("Branşları aşağıdaki tablodan ekleyebilir, düzenleyebilir veya silebilirsiniz.")
@@ -1285,327 +1295,6 @@ if menu == "Tanımlamalar":
                     st.success("Kısıtlamalar kaydedildi!")
                     st.rerun()
 
-        # --- Otomatik Nöbet Atama ---
-        st.divider()
-        st.subheader("Otomatik Nöbet Atama")
-        st.info("Öğretmenlerin izinli olduğu günleri dikkate alarak, nöbet günlerini haftaya dengeli bir şekilde dağıtır.")
-        
-        col_duty1, col_duty2, col_duty3 = st.columns([2, 1, 1])
-        keep_existing = col_duty1.checkbox("Mevcut nöbet atamalarını koru (Sadece boş olanlara ata)", value=False)
-        
-        total_teachers_count = len(st.session_state.teachers)
-        default_max = (total_teachers_count // 5) + 1 if total_teachers_count > 0 else 5
-        target_per_day = col_duty2.number_input("Günlük Maks. Nöbetçi", min_value=1, max_value=50, value=default_max, help="Her gün için atanacak maksimum nöbetçi öğretmen sayısı.")
-        
-        if col_duty3.button("Nöbetleri Dağıt", key="btn_auto_duty"):
-            days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-            day_counts = {d: 0 for d in days}
-            
-            # Mevcut dolulukları hesapla (Eğer koruma açıksa)
-            if keep_existing:
-                for t in st.session_state.teachers:
-                    d = t.get('duty_day')
-                    if d in days:
-                        day_counts[d] += 1
-            
-            # İşlenecek öğretmenleri belirle
-            teachers_to_process = []
-            for t in st.session_state.teachers:
-                if keep_existing and t.get('duty_day') in days:
-                    continue
-                teachers_to_process.append(t)
-            
-            # Karıştır (Adil dağılım için)
-            random.shuffle(teachers_to_process)
-            
-            assigned_count = 0
-            unassigned_count = 0
-            
-            for t in teachers_to_process:
-                unavailable = t.get('unavailable_days', []) or []
-                valid_days = [d for d in days if d not in unavailable]
-                
-                # Kapasite kontrolü: Sadece limiti aşmamış günleri aday yap
-                available_candidates = [d for d in valid_days if day_counts[d] < target_per_day]
-                
-                if available_candidates:
-                    # En az yoğun olan günlerden rastgele birini seç
-                    min_count = min(day_counts[d] for d in available_candidates)
-                    candidates = [d for d in available_candidates if day_counts[d] == min_count]
-                    selected_day = random.choice(candidates)
-                    
-                    t['duty_day'] = selected_day
-                    day_counts[selected_day] += 1
-                    assigned_count += 1
-                else:
-                    # Uygun gün yok veya kontenjan dolu
-                    if not keep_existing:
-                        t['duty_day'] = "Yok"
-                    unassigned_count += 1
-            
-            save_data()
-            msg = f"{assigned_count} öğretmene nöbet günü atandı!"
-            if unassigned_count > 0:
-                st.warning(f"{msg} (Kontenjan veya kısıtlamalar nedeniyle {unassigned_count} öğretmen boşta kaldı.)")
-            else:
-                st.success(msg)
-            time.sleep(1)
-            st.rerun()
-
-        # --- Manuel Nöbet Düzenleme (Kova Sistemi) ---
-        st.divider()
-        st.subheader("Manuel Nöbet Düzenleme")
-        st.info("Öğretmenleri ilgili günlerin kutucuklarına ekleyip çıkararak nöbet günlerini belirleyebilirsiniz.")
-        
-        with st.form("manual_duty_form"):
-            days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-            
-            # Mevcut durumu al
-            current_assignments = {d: [] for d in days}
-            all_teacher_names = sorted([t['name'] for t in st.session_state.teachers if t.get('name')])
-            
-            # Ders Yüklerini Hesapla (Program oluşturulmuşsa)
-            teacher_daily_loads = {d: {} for d in days}
-            if 'last_schedule' in st.session_state and st.session_state.last_schedule:
-                for item in st.session_state.last_schedule:
-                    t_name = item.get('Öğretmen')
-                    day = item.get('Gün')
-                    if t_name and day in teacher_daily_loads:
-                        teacher_daily_loads[day][t_name] = teacher_daily_loads[day].get(t_name, 0) + 1
-
-            for t in st.session_state.teachers:
-                d_raw = t.get('duty_day')
-                # Listeye çevir
-                if isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]: d_list = [d_raw]
-                elif isinstance(d_raw, list): d_list = d_raw
-                else: d_list = []
-                
-                for d in d_list:
-                    if d in days and t.get('name'):
-                        current_assignments[d].append(t['name'])
-            
-            # Multiselectler
-            cols = st.columns(5)
-            new_assignments = {}
-            
-            for i, d in enumerate(days):
-                with cols[i]:
-                    st.markdown(f"**{d}**")
-                    # Varsayılan değerler, listede mevcut olmalı
-                    valid_defaults = [t for t in current_assignments[d] if t in all_teacher_names]
-                    
-                    # Format fonksiyonu (O günkü ders sayısını göster)
-                    def fmt_func(x, day=d):
-                        return f"{x} ({teacher_daily_loads[day].get(x, 0)} Ders)"
-
-                    new_assignments[d] = st.multiselect(
-                        "Seç", 
-                        all_teacher_names, 
-                        default=valid_defaults, 
-                        key=f"ms_duty_{d}",
-                        label_visibility="collapsed",
-                        format_func=fmt_func
-                    )
-            
-            if st.form_submit_button("Nöbetleri Kaydet"):
-                # Çakışma ve Veri Kontrolü
-                teacher_days_map = {} # name -> set of days
-                
-                for d in days:
-                    for t_name in new_assignments[d]:
-                        if t_name not in teacher_days_map: teacher_days_map[t_name] = set()
-                        teacher_days_map[t_name].add(d)
-                
-                # Güncelleme
-                cnt = 0
-                for t in st.session_state.teachers:
-                    t_name = t.get('name')
-                    new_days = []
-                    if t_name in teacher_days_map:
-                        # Günleri sıralı kaydet
-                        new_days = sorted(list(teacher_days_map[t_name]), key=lambda x: days.index(x))
-                    
-                    # Değişiklik var mı?
-                    old_days = t.get('duty_day')
-                    if isinstance(old_days, str): old_days = [old_days] if old_days not in [None, "Yok", ""] else []
-                    if not isinstance(old_days, list): old_days = []
-                    
-                    if new_days != old_days:
-                        t['duty_day'] = new_days
-                        cnt += 1
-                
-                save_data()
-                st.success(f"Nöbet günleri güncellendi. ({cnt} değişiklik)")
-                time.sleep(1)
-                st.rerun()
-
-        # --- Nöbet Yeri Düzenleme ---
-        st.write("###### Nöbet Yerleri")
-        
-        # Yükleri Hesapla (Tekrar, bu blok için)
-        teacher_daily_loads_table = {d: {} for d in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]}
-        if 'last_schedule' in st.session_state and st.session_state.last_schedule:
-             for item in st.session_state.last_schedule:
-                t_name = item.get('Öğretmen')
-                day = item.get('Gün')
-                if t_name and day in teacher_daily_loads_table:
-                    teacher_daily_loads_table[day][t_name] = teacher_daily_loads_table[day].get(t_name, 0) + 1
-
-        # Nöbet günü olan öğretmenleri filtrele
-        duty_teachers = []
-        for t in st.session_state.teachers:
-            d_raw = t.get('duty_day')
-            if isinstance(d_raw, list) and len(d_raw) > 0: duty_teachers.append(t)
-            elif isinstance(d_raw, str) and d_raw in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]: duty_teachers.append(t)
-        
-        with st.expander("Otomatik Yer Dağıtımı"):
-            st.info("Seçilen öğretmenlere, nöbet günlerinde dengeli olacak şekilde nöbet yeri atar.")
-            
-            # 1. Öğretmen Seçimi
-            teacher_opts = [t['name'] for t in duty_teachers]
-            selected_teachers_dist = st.multiselect("Öğretmenleri Seç", teacher_opts, default=teacher_opts)
-            
-            # 2. Yer Seçimi
-            place_opts = st.session_state.duty_places
-            selected_places_dist = st.multiselect("Dağıtılacak Yerler", place_opts, default=place_opts)
-            
-            use_rotation = st.checkbox("Rotasyon Uygula (Mevcut yerlerden farklı ata)", value=False, help="Seçili ise, öğretmenin şu anki nöbet yerinden farklı bir yer atanmaya çalışılır.")
-            
-            if st.button("Yerleri Dağıt", key="btn_distribute_places"):
-                if not selected_places_dist:
-                    st.error("Lütfen en az bir nöbet yeri seçin.")
-                elif not selected_teachers_dist:
-                    st.error("Lütfen en az bir öğretmen seçin.")
-                else:
-                    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
-                    usage = {d: {p: 0 for p in selected_places_dist} for d in days}
-                    
-                    # Öğretmen Ders Yüklerini Hesapla (Sıralama için)
-                    t_loads = {}
-                    for c_name, courses in st.session_state.class_lessons.items():
-                        for crs_name, hours in courses.items():
-                            t_name = st.session_state.assignments.get(c_name, {}).get(crs_name)
-                            if t_name:
-                                t_loads[t_name] = t_loads.get(t_name, 0) + int(hours)
-
-                    # Rotasyon için mevcut yerleri sakla
-                    previous_places = {}
-                    if use_rotation:
-                        for t in st.session_state.teachers:
-                            if t['name'] in selected_teachers_dist:
-                                previous_places[t['name']] = t.get('duty_place')
-                    
-                    # Dağıtıma dahil OLMAYAN öğretmenlerin mevcut yerlerini say (Dengeyi korumak için)
-                    for t in st.session_state.teachers:
-                        if t['name'] not in selected_teachers_dist:
-                            d_raw = t.get('duty_day')
-                            d_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw in days else [])
-                            p = t.get('duty_place')
-                            if p in selected_places_dist:
-                                for d in d_list:
-                                    if d in days: usage[d][p] += 1
-                    
-                    # Seçilen öğretmenleri karıştır ve dağıt
-                    # Adil dağıtım için: Ders yükü FAZLA olan öğretmenlere öncelik ver (Böylece boş olan KOLAY yerleri onlar kapsın)
-                    teachers_to_process = [t for t in st.session_state.teachers if t['name'] in selected_teachers_dist]
-                    teachers_to_process.sort(key=lambda x: t_loads.get(x['name'], 0), reverse=True)
-                    
-                    for t in teachers_to_process:
-                        d_raw = t.get('duty_day')
-                        d_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw in days else [])
-                        if not d_list: continue
-                        
-                        # En az yoğun olan yeri bul (Greedy)
-                        best_place = None
-                        min_score = float('inf')
-                        candidates = list(selected_places_dist)
-                        random.shuffle(candidates) # Eşitlik durumunda rastgelelik
-                        
-                        for p in candidates:
-                            # Cinsiyet Kontrolü
-                            constraint = st.session_state.duty_place_constraints.get(p, "Herkes")
-                            t_gender = t.get('gender', 'Erkek')
-                            if constraint != "Herkes" and t_gender != constraint:
-                                continue
-                            
-                            # Branş Kontrolü
-                            allowed_branches = st.session_state.duty_place_branch_constraints.get(p, [])
-                            t_branch = t.get('branch')
-                            if allowed_branches and len(allowed_branches) > 0:
-                                if t_branch not in allowed_branches:
-                                    continue
-
-                            current_usage = sum(usage[d][p] for d in d_list if d in days)
-                            difficulty = st.session_state.duty_place_scores.get(p, 1)
-                            
-                            # Puanlama: Öncelik doluluk dengesi (usage * 1000), ikincil öncelik zorluk (difficulty)
-                            score = (current_usage * 1000) + difficulty
-                            
-                            # Rotasyon cezası (Eğer eski yer ise puanı artır ki seçilmesin)
-                            if use_rotation and previous_places.get(t['name']) == p:
-                                score += 1000
-                            
-                            # İstemediği Yer Cezası
-                            unwanted = t.get('unwanted_duty_places', [])
-                            if unwanted and p in unwanted:
-                                score += 2000
-                                
-                            if score < min_score:
-                                min_score = score
-                                best_place = p
-                        
-                        if best_place:
-                            t['duty_place'] = best_place
-                            for d in d_list:
-                                if d in days: usage[d][best_place] += 1
-                    
-                    save_data()
-                    st.success("Nöbet yerleri başarıyla dağıtıldı.")
-                    time.sleep(1)
-                    st.rerun()
-
-        if duty_teachers:
-            # Tablo verisini hazırla (Ders yükü ile birlikte)
-            table_data = []
-            for t in duty_teachers:
-                d_raw = t.get('duty_day')
-                if isinstance(d_raw, str): d_list = [d_raw]
-                else: d_list = d_raw if d_raw else []
-                
-                t_name = t.get('name')
-                
-                for d in d_list:
-                    load = teacher_daily_loads_table.get(d, {}).get(t_name, 0)
-                    table_data.append({
-                        "name": t_name,
-                        "duty_day": d,
-                        "daily_load": load,
-                        "duty_place": t.get('duty_place')
-                    })
-            
-            df_duty_places = pd.DataFrame(table_data)
-            
-            edited_places = st.data_editor(
-                df_duty_places,
-                column_config={
-                    "name": st.column_config.TextColumn("Öğretmen", disabled=True),
-                    "duty_day": st.column_config.TextColumn("Gün", disabled=True),
-                    "daily_load": st.column_config.NumberColumn("Ders Yükü", disabled=True, help="Öğretmenin nöbet günündeki toplam ders saati"),
-                    "duty_place": st.column_config.SelectboxColumn("Nöbet Yeri", options=st.session_state.duty_places, required=False)
-                },
-                hide_index=True,
-                use_container_width=True,
-                key="editor_duty_places"
-            )
-            
-            if st.button("Nöbet Yerlerini Kaydet"):
-                place_map = {row['name']: row['duty_place'] for _, row in edited_places.iterrows()}
-                for t in st.session_state.teachers:
-                    if t['name'] in place_map:
-                        t['duty_place'] = place_map[t['name']]
-                save_data()
-                st.success("Nöbet yerleri kaydedildi.")
-
     with tab4: # Dersler
         st.info("Dersleri tablodan düzenleyebilirsiniz.")
         if not st.session_state.courses:
@@ -1666,35 +1355,6 @@ if menu == "Tanımlamalar":
             }
             save_data()
             st.success("Sınıf listesi ve öğretmenleri güncellendi.")
-
-    with tab6: # Nöbet Yerleri
-        st.info("Okuldaki nöbet yerlerini (Bahçe, Koridor vb.) buradan tanımlayabilirsiniz.")
-        
-        place_data = []
-        for p in st.session_state.duty_places:
-            place_data.append({
-                "Nöbet Yeri": p,
-                "Kısıtlama": st.session_state.duty_place_constraints.get(p, "Herkes"),
-                "Branş Kısıtlaması": st.session_state.duty_place_branch_constraints.get(p, []),
-                "Zorluk Puanı": st.session_state.duty_place_scores.get(p, 1)
-            })
-        df_places = pd.DataFrame(place_data)
-        
-        edited_places = st.data_editor(
-            df_places, 
-            column_config={
-                "Kısıtlama": st.column_config.SelectboxColumn("Cinsiyet Kısıtlaması", options=["Herkes", "Erkek", "Kadın"], required=True, default="Herkes"),
-                "Branş Kısıtlaması": st.column_config.ListColumn("Branş Kısıtlaması", help="Sadece belirli branşlar nöbet tutsun (Boş bırakılırsa herkes tutabilir)."),
-                "Zorluk Puanı": st.column_config.NumberColumn("Zorluk Puanı", min_value=1, max_value=10, help="1: Çok Kolay, 10: Çok Zor")
-            },
-            num_rows="dynamic", width="stretch", key="editor_duty_places_def")
-        if st.button("Nöbet Yerlerini Kaydet", key="save_duty_places"):
-            st.session_state.duty_places = edited_places["Nöbet Yeri"].dropna().astype(str).tolist()
-            st.session_state.duty_place_constraints = {row["Nöbet Yeri"]: row["Kısıtlama"] for _, row in edited_places.iterrows()}
-            st.session_state.duty_place_branch_constraints = {row["Nöbet Yeri"]: row["Branş Kısıtlaması"] for _, row in edited_places.iterrows()}
-            st.session_state.duty_place_scores = {row["Nöbet Yeri"]: int(row["Zorluk Puanı"]) for _, row in edited_places.iterrows()}
-            save_data()
-            st.success("Nöbet yerleri listesi güncellendi.")
 
 # --- 2. DERS ATAMA & KOPYALAMA ---
 elif menu == "Ders Atama & Kopyalama":
@@ -2790,7 +2450,379 @@ elif menu == "Program Oluştur":
             else:
                 st.info("Programda tanımlı derslik kullanımı bulunamadı.")
 
-        st.divider()
+# --- 4. NÖBET İŞLEMLERİ ---
+elif menu == "Nöbet İşlemleri":
+    st.header("Nöbet Yönetimi")
+    
+    # Yetki Kontrolü (Sadece Admin düzenleyebilir, diğerleri rapor görebilir)
+    is_admin = st.session_state.role == "admin"
+    
+    if is_admin:
+        tab_def, tab_day, tab_place, tab_rep = st.tabs(["Nöbet Yerleri Tanımlama", "Nöbet Günü Atama", "Nöbet Yeri Atama", "Çizelge ve Raporlar"])
+    else:
+        tab_rep = st.tabs(["Çizelge ve Raporlar"])[0]
+        tab_def, tab_day, tab_place = None, None, None
+
+    if is_admin:
+        with tab_def:
+            st.info("Okuldaki nöbet yerlerini (Bahçe, Koridor vb.) buradan tanımlayabilirsiniz.")
+            
+            place_data = []
+            for p in st.session_state.duty_places:
+                place_data.append({
+                    "Nöbet Yeri": p,
+                    "Kısıtlama": st.session_state.duty_place_constraints.get(p, "Herkes"),
+                    "Branş Kısıtlaması": st.session_state.duty_place_branch_constraints.get(p, []),
+                    "Zorluk Puanı": st.session_state.duty_place_scores.get(p, 1)
+                })
+            df_places = pd.DataFrame(place_data)
+            
+            edited_places = st.data_editor(
+                df_places, 
+                column_config={
+                    "Kısıtlama": st.column_config.SelectboxColumn("Cinsiyet Kısıtlaması", options=["Herkes", "Erkek", "Kadın"], required=True, default="Herkes"),
+                    "Branş Kısıtlaması": st.column_config.ListColumn("Branş Kısıtlaması", help="Sadece belirli branşlar nöbet tutsun (Boş bırakılırsa herkes tutabilir)."),
+                    "Zorluk Puanı": st.column_config.NumberColumn("Zorluk Puanı", min_value=1, max_value=10, help="1: Çok Kolay, 10: Çok Zor")
+                },
+                num_rows="dynamic", width="stretch", key="editor_duty_places_def")
+            if st.button("Nöbet Yerlerini Kaydet", key="save_duty_places"):
+                st.session_state.duty_places = edited_places["Nöbet Yeri"].dropna().astype(str).tolist()
+                st.session_state.duty_place_constraints = {row["Nöbet Yeri"]: row["Kısıtlama"] for _, row in edited_places.iterrows()}
+                st.session_state.duty_place_branch_constraints = {row["Nöbet Yeri"]: row["Branş Kısıtlaması"] for _, row in edited_places.iterrows()}
+                st.session_state.duty_place_scores = {row["Nöbet Yeri"]: int(row["Zorluk Puanı"]) for _, row in edited_places.iterrows()}
+                save_data()
+                st.success("Nöbet yerleri listesi güncellendi.")
+
+        with tab_day:
+            st.subheader("Otomatik Nöbet Atama")
+            st.info("Öğretmenlerin izinli olduğu günleri dikkate alarak, nöbet günlerini haftaya dengeli bir şekilde dağıtır.")
+            
+            col_duty1, col_duty2, col_duty3 = st.columns([2, 1, 1])
+            keep_existing = col_duty1.checkbox("Mevcut nöbet atamalarını koru (Sadece boş olanlara ata)", value=False)
+            include_weekend_auto = col_duty1.checkbox("Hafta Sonu Dahil Et", value=False, key="inc_weekend_auto")
+            
+            total_teachers_count = len(st.session_state.teachers)
+            default_max = (total_teachers_count // 5) + 1 if total_teachers_count > 0 else 5
+            target_per_day = col_duty2.number_input("Günlük Maks. Nöbetçi", min_value=1, max_value=50, value=default_max, help="Her gün için atanacak maksimum nöbetçi öğretmen sayısı.")
+            
+            if col_duty3.button("Nöbetleri Dağıt", key="btn_auto_duty"):
+                days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                if include_weekend_auto:
+                    days.extend(["Cumartesi", "Pazar"])
+                day_counts = {d: 0 for d in days}
+                
+                # Mevcut dolulukları hesapla (Eğer koruma açıksa)
+                if keep_existing:
+                    for t in st.session_state.teachers:
+                        d = t.get('duty_day')
+                        if d in days:
+                            day_counts[d] += 1
+                
+                # İşlenecek öğretmenleri belirle
+                teachers_to_process = []
+                for t in st.session_state.teachers:
+                    if keep_existing and t.get('duty_day') in days:
+                        continue
+                    teachers_to_process.append(t)
+                
+                # Karıştır (Adil dağılım için)
+                random.shuffle(teachers_to_process)
+                
+                assigned_count = 0
+                unassigned_count = 0
+                
+                for t in teachers_to_process:
+                    unavailable = t.get('unavailable_days', []) or []
+                    valid_days = [d for d in days if d not in unavailable]
+                    
+                    # Kapasite kontrolü: Sadece limiti aşmamış günleri aday yap
+                    available_candidates = [d for d in valid_days if day_counts[d] < target_per_day]
+                    
+                    if available_candidates:
+                        # En az yoğun olan günlerden rastgele birini seç
+                        min_count = min(day_counts[d] for d in available_candidates)
+                        candidates = [d for d in available_candidates if day_counts[d] == min_count]
+                        selected_day = random.choice(candidates)
+                        
+                        t['duty_day'] = selected_day
+                        day_counts[selected_day] += 1
+                        assigned_count += 1
+                    else:
+                        # Uygun gün yok veya kontenjan dolu
+                        if not keep_existing:
+                            t['duty_day'] = "Yok"
+                        unassigned_count += 1
+                
+                save_data()
+                msg = f"{assigned_count} öğretmene nöbet günü atandı!"
+                if unassigned_count > 0:
+                    st.warning(f"{msg} (Kontenjan veya kısıtlamalar nedeniyle {unassigned_count} öğretmen boşta kaldı.)")
+                else:
+                    st.success(msg)
+                time.sleep(1)
+                st.rerun()
+
+            # --- Manuel Nöbet Düzenleme (Kova Sistemi) ---
+            st.divider()
+            st.subheader("Manuel Nöbet Düzenleme")
+            st.info("Öğretmenleri ilgili günlerin kutucuklarına ekleyip çıkararak nöbet günlerini belirleyebilirsiniz.")
+            
+            with st.form("manual_duty_form"):
+                include_weekend_manual = st.checkbox("Hafta Sonu Göster", value=False)
+                days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                if include_weekend_manual:
+                    days.extend(["Cumartesi", "Pazar"])
+                
+                # Mevcut durumu al
+                current_assignments = {d: [] for d in days}
+                all_teacher_names = sorted([t['name'] for t in st.session_state.teachers if t.get('name')])
+                
+                # Ders Yüklerini Hesapla (Program oluşturulmuşsa)
+                teacher_daily_loads = {d: {} for d in days}
+                if 'last_schedule' in st.session_state and st.session_state.last_schedule:
+                    for item in st.session_state.last_schedule:
+                        t_name = item.get('Öğretmen')
+                        day = item.get('Gün')
+                        if t_name and day in teacher_daily_loads:
+                            teacher_daily_loads[day][t_name] = teacher_daily_loads[day].get(t_name, 0) + 1
+
+                for t in st.session_state.teachers:
+                    d_raw = t.get('duty_day')
+                    # Listeye çevir
+                    if isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]: d_list = [d_raw]
+                    elif isinstance(d_raw, list): d_list = d_raw
+                    else: d_list = []
+                    
+                    for d in d_list:
+                        if d in days and t.get('name'):
+                            current_assignments[d].append(t['name'])
+                
+                # Multiselectler
+                cols = st.columns(len(days))
+                new_assignments = {}
+                
+                for i, d in enumerate(days):
+                    with cols[i]:
+                        st.markdown(f"**{d}**")
+                        # Varsayılan değerler, listede mevcut olmalı
+                        valid_defaults = [t for t in current_assignments[d] if t in all_teacher_names]
+                        
+                        # Format fonksiyonu (O günkü ders sayısını göster)
+                        def fmt_func(x, day=d):
+                            return f"{x} ({teacher_daily_loads[day].get(x, 0)} Ders)"
+
+                        new_assignments[d] = st.multiselect(
+                            "Seç", 
+                            all_teacher_names, 
+                            default=valid_defaults, 
+                            key=f"ms_duty_{d}",
+                            label_visibility="collapsed",
+                            format_func=fmt_func
+                        )
+                
+                if st.form_submit_button("Nöbetleri Kaydet"):
+                    # Çakışma ve Veri Kontrolü
+                    teacher_days_map = {} # name -> set of days
+                    
+                    for d in days:
+                        for t_name in new_assignments[d]:
+                            if t_name not in teacher_days_map: teacher_days_map[t_name] = set()
+                            teacher_days_map[t_name].add(d)
+                    
+                    # Güncelleme
+                    cnt = 0
+                    for t in st.session_state.teachers:
+                        t_name = t.get('name')
+                        new_days = []
+                        if t_name in teacher_days_map:
+                            # Günleri sıralı kaydet
+                            new_days = sorted(list(teacher_days_map[t_name]), key=lambda x: days.index(x))
+                        
+                        # Değişiklik var mı?
+                        old_days = t.get('duty_day')
+                        if isinstance(old_days, str): old_days = [old_days] if old_days not in [None, "Yok", ""] else []
+                        if not isinstance(old_days, list): old_days = []
+                        
+                        if new_days != old_days:
+                            t['duty_day'] = new_days
+                            cnt += 1
+                    
+                    save_data()
+                    st.success(f"Nöbet günleri güncellendi. ({cnt} değişiklik)")
+                    time.sleep(1)
+                    st.rerun()
+
+        with tab_place:
+            st.subheader("Nöbet Yeri Düzenleme")
+            
+            # Yükleri Hesapla (Tekrar, bu blok için)
+            teacher_daily_loads_table = {d: {} for d in ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]}
+            if 'last_schedule' in st.session_state and st.session_state.last_schedule:
+                 for item in st.session_state.last_schedule:
+                    t_name = item.get('Öğretmen')
+                    day = item.get('Gün')
+                    if t_name and day in teacher_daily_loads_table:
+                        teacher_daily_loads_table[day][t_name] = teacher_daily_loads_table[day].get(t_name, 0) + 1
+
+            # Nöbet günü olan öğretmenleri filtrele
+            duty_teachers = []
+            for t in st.session_state.teachers:
+                d_raw = t.get('duty_day')
+                if isinstance(d_raw, list) and len(d_raw) > 0: duty_teachers.append(t)
+                elif isinstance(d_raw, str) and d_raw not in [None, "Yok", ""]: duty_teachers.append(t)
+            
+            with st.expander("Otomatik Yer Dağıtımı"):
+                st.info("Seçilen öğretmenlere, nöbet günlerinde dengeli olacak şekilde nöbet yeri atar.")
+                
+                # 1. Öğretmen Seçimi
+                teacher_opts = [t['name'] for t in duty_teachers]
+                selected_teachers_dist = st.multiselect("Öğretmenleri Seç", teacher_opts, default=teacher_opts)
+                
+                # 2. Yer Seçimi
+                place_opts = st.session_state.duty_places
+                selected_places_dist = st.multiselect("Dağıtılacak Yerler", place_opts, default=place_opts)
+                
+                use_rotation = st.checkbox("Rotasyon Uygula (Mevcut yerlerden farklı ata)", value=False, help="Seçili ise, öğretmenin şu anki nöbet yerinden farklı bir yer atanmaya çalışılır.")
+                include_weekend_place = st.checkbox("Hafta Sonu Dahil Et", value=False, key="inc_weekend_place")
+                
+                if st.button("Yerleri Dağıt", key="btn_distribute_places"):
+                    if not selected_places_dist:
+                        st.error("Lütfen en az bir nöbet yeri seçin.")
+                    elif not selected_teachers_dist:
+                        st.error("Lütfen en az bir öğretmen seçin.")
+                    else:
+                        days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                        if include_weekend_place:
+                            days.extend(["Cumartesi", "Pazar"])
+                        usage = {d: {p: 0 for p in selected_places_dist} for d in days}
+                        
+                        # Öğretmen Ders Yüklerini Hesapla (Sıralama için)
+                        t_loads = {}
+                        for c_name, courses in st.session_state.class_lessons.items():
+                            for crs_name, hours in courses.items():
+                                t_name = st.session_state.assignments.get(c_name, {}).get(crs_name)
+                                if t_name:
+                                    t_loads[t_name] = t_loads.get(t_name, 0) + int(hours)
+
+                        # Rotasyon için mevcut yerleri sakla
+                        previous_places = {}
+                        if use_rotation:
+                            for t in st.session_state.teachers:
+                                if t['name'] in selected_teachers_dist:
+                                    previous_places[t['name']] = t.get('duty_place')
+                        
+                        # Dağıtıma dahil OLMAYAN öğretmenlerin mevcut yerlerini say (Dengeyi korumak için)
+                        for t in st.session_state.teachers:
+                            if t['name'] not in selected_teachers_dist:
+                                d_raw = t.get('duty_day')
+                                d_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw in days else [])
+                                p = t.get('duty_place')
+                                if p in selected_places_dist:
+                                    for d in d_list:
+                                        if d in days: usage[d][p] += 1
+                        
+                        # Seçilen öğretmenleri karıştır ve dağıt
+                        # Adil dağıtım için: Ders yükü FAZLA olan öğretmenlere öncelik ver (Böylece boş olan KOLAY yerleri onlar kapsın)
+                        teachers_to_process = [t for t in st.session_state.teachers if t['name'] in selected_teachers_dist]
+                        teachers_to_process.sort(key=lambda x: t_loads.get(x['name'], 0), reverse=True)
+                        
+                        for t in teachers_to_process:
+                            d_raw = t.get('duty_day')
+                            d_list = d_raw if isinstance(d_raw, list) else ([d_raw] if d_raw in days else [])
+                            if not d_list: continue
+                            
+                            # En az yoğun olan yeri bul (Greedy)
+                            best_place = None
+                            min_score = float('inf')
+                            candidates = list(selected_places_dist)
+                            random.shuffle(candidates) # Eşitlik durumunda rastgelelik
+                            
+                            for p in candidates:
+                                # Cinsiyet Kontrolü
+                                constraint = st.session_state.duty_place_constraints.get(p, "Herkes")
+                                t_gender = t.get('gender', 'Erkek')
+                                if constraint != "Herkes" and t_gender != constraint:
+                                    continue
+                                
+                                # Branş Kontrolü
+                                allowed_branches = st.session_state.duty_place_branch_constraints.get(p, [])
+                                t_branch = t.get('branch')
+                                if allowed_branches and len(allowed_branches) > 0:
+                                    if t_branch not in allowed_branches:
+                                        continue
+
+                                current_usage = sum(usage[d][p] for d in d_list if d in days)
+                                difficulty = st.session_state.duty_place_scores.get(p, 1)
+                                
+                                # Puanlama: Öncelik doluluk dengesi (usage * 1000), ikincil öncelik zorluk (difficulty)
+                                score = (current_usage * 1000) + difficulty
+                                
+                                # Rotasyon cezası (Eğer eski yer ise puanı artır ki seçilmesin)
+                                if use_rotation and previous_places.get(t['name']) == p:
+                                    score += 1000
+                                
+                                # İstemediği Yer Cezası
+                                unwanted = t.get('unwanted_duty_places', [])
+                                if unwanted and p in unwanted:
+                                    score += 2000
+                                    
+                                if score < min_score:
+                                    min_score = score
+                                    best_place = p
+                            
+                            if best_place:
+                                t['duty_place'] = best_place
+                                for d in d_list:
+                                    if d in days: usage[d][best_place] += 1
+                        
+                        save_data()
+                        st.success("Nöbet yerleri başarıyla dağıtıldı.")
+                        time.sleep(1)
+                        st.rerun()
+
+            if duty_teachers:
+                # Tablo verisini hazırla (Ders yükü ile birlikte)
+                table_data = []
+                for t in duty_teachers:
+                    d_raw = t.get('duty_day')
+                    if isinstance(d_raw, str): d_list = [d_raw]
+                    else: d_list = d_raw if d_raw else []
+                    
+                    t_name = t.get('name')
+                    
+                    for d in d_list:
+                        load = teacher_daily_loads_table.get(d, {}).get(t_name, 0)
+                        table_data.append({
+                            "name": t_name,
+                            "duty_day": d,
+                            "daily_load": load,
+                            "duty_place": t.get('duty_place')
+                        })
+                
+                df_duty_places = pd.DataFrame(table_data)
+                
+                edited_places = st.data_editor(
+                    df_duty_places,
+                    column_config={
+                        "name": st.column_config.TextColumn("Öğretmen", disabled=True),
+                        "duty_day": st.column_config.TextColumn("Gün", disabled=True),
+                        "daily_load": st.column_config.NumberColumn("Ders Yükü", disabled=True, help="Öğretmenin nöbet günündeki toplam ders saati"),
+                        "duty_place": st.column_config.SelectboxColumn("Nöbet Yeri", options=st.session_state.duty_places, required=False)
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key="editor_duty_places"
+                )
+                
+                if st.button("Nöbet Yerlerini Kaydet"):
+                    place_map = {row['name']: row['duty_place'] for _, row in edited_places.iterrows()}
+                    for t in st.session_state.teachers:
+                        if t['name'] in place_map:
+                            t['duty_place'] = place_map[t['name']]
+                    save_data()
+                    st.success("Nöbet yerleri kaydedildi.")
+
+    with tab_rep:
         st.subheader("Nöbet Yeri Dağılımı")
         
         # Öğretmen verilerini al
@@ -2833,16 +2865,26 @@ elif menu == "Program Oluştur":
             
             # 2. Tablo: Detaylı Liste
             st.write("###### Nöbet Yeri Listesi")
-            st.dataframe(df_duty.sort_values(by=["Nöbet Yeri", "Nöbet Günü"]), use_container_width=True, hide_index=True)
+            
+            def color_duty_place(val):
+                h = hashlib.md5(str(val).encode()).hexdigest()
+                r, g, b = int(h[:2], 16) % 50 + 200, int(h[2:4], 16) % 50 + 200, int(h[4:6], 16) % 50 + 200
+                return f'background-color: rgb({r},{g},{b}); color: black'
+
+            st.dataframe(df_duty.sort_values(by=["Nöbet Yeri", "Nöbet Günü"]).style.map(color_duty_place, subset=["Nöbet Yeri"]), use_container_width=True, hide_index=True)
             
             # PDF İndirme Butonu
             if FPDF:
                 st.write("###### Rapor Seçenekleri")
+                include_weekend_rep = st.checkbox("Hafta Sonu Dahil Et", value=False, key="inc_weekend_rep")
                 
                 # Müdür Yardımcıları Girişi
                 st.write("###### Nöbetçi Müdür Yardımcıları")
-                cols_vp = st.columns(5)
                 days_list = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"]
+                if include_weekend_rep:
+                    days_list.extend(["Cumartesi", "Pazar"])
+                
+                cols_vp = st.columns(len(days_list))
                 
                 # Müdür Yardımcılarını Filtrele
                 vp_list = [t['name'] for t in st.session_state.teachers if t.get('title') == "Müdür Yardımcısı"]
@@ -2877,7 +2919,7 @@ elif menu == "Program Oluştur":
                         
                     num_weeks = col_rep3.number_input("Hafta Sayısı (Örn: 4 hafta = 1 Ay)", min_value=1, max_value=10, value=4)
                 
-                pdf_duty = create_duty_pdf(start_date=start_date if use_dates else None, num_weeks=num_weeks, vice_principals=st.session_state.vice_principals)
+                pdf_duty = create_duty_pdf(start_date=start_date if use_dates else None, num_weeks=num_weeks, vice_principals=st.session_state.vice_principals, include_weekend=include_weekend_rep)
                 st.download_button("📄 Nöbet Çizelgesini PDF İndir", data=pdf_duty, file_name="nobet_cizelgesi.pdf", mime="application/pdf")
         else:
             st.info("Henüz nöbet yeri tanımlanmış öğretmen bulunmamaktadır.")
