@@ -57,7 +57,7 @@ def get_schools():
     if not os.path.exists(DB_FILE): return []
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
-        c.execute("SELECT id, name, username FROM schools")
+        c.execute("SELECT id, name, username, password FROM schools")
         rows = c.fetchall()
     return rows
 
@@ -92,9 +92,9 @@ def verify_school_user(username, password):
     if not os.path.exists(DB_FILE): return None
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
-        c.execute("SELECT id, name FROM schools WHERE username = ? AND password = ?", (username, password))
+        c.execute("SELECT id, name, username FROM schools WHERE username = ? AND password = ?", (username, password))
         row = c.fetchone()
-    return row # (id, name)
+    return row # (id, name, username)
 
 def load_data(school_id=None):
     # Dosya varlık ve zaman kontrolü
@@ -888,6 +888,7 @@ if not st.session_state.logged_in:
             if is_super:
                 st.session_state.logged_in = True
                 st.session_state.role = "super_admin"
+                st.session_state.username = username
                 st.rerun()
 
             # 2. Okul Yöneticisi Kontrolü (DB'den)
@@ -897,6 +898,7 @@ if not st.session_state.logged_in:
                 st.session_state.role = "admin" # Okul yöneticisi kendi okulunun adminidir
                 st.session_state.school_id = school_user[0]
                 st.session_state.school_name = school_user[1]
+                st.session_state.username = school_user[2]
                 st.rerun()
 
             # Örnek Kullanıcılar (Rol Tabanlı Erişim İçin)
@@ -911,6 +913,7 @@ if not st.session_state.logged_in:
             if username in DEMO_USERS and DEMO_USERS[username]["pass"] == password:
                 st.session_state.logged_in = True
                 st.session_state.role = DEMO_USERS[username]["role"]
+                st.session_state.username = username
                 st.rerun()
             elif "auth" in st.secrets:
                 valid_user = st.secrets["auth"]["username"]
@@ -923,6 +926,7 @@ if not st.session_state.logged_in:
                 if username == valid_user and hmac.compare_digest(input_hash, stored_hash):
                     st.session_state.logged_in = True
                     st.session_state.role = "admin"
+                    st.session_state.username = username
                     st.rerun()
                 else:
                     st.error("Hatalı kullanıcı adı veya şifre")
@@ -931,6 +935,7 @@ if not st.session_state.logged_in:
                 if username == "admin" and password == "admin":
                     st.session_state.logged_in = True
                     st.session_state.role = "admin"
+                    st.session_state.username = username
                     st.rerun()
                 else:
                     st.error("Giriş bilgileri (secrets.toml) bulunamadı! Varsayılan: admin / admin")
@@ -938,11 +943,13 @@ if not st.session_state.logged_in:
 
 # --- Süper Admin Paneli ---
 if st.session_state.get("role") == "super_admin":
-    st.sidebar.title("Süper Admin")
-    if st.sidebar.button("🚪 Çıkış Yap"):
-        st.session_state.logged_in = False
-        st.session_state.role = 'viewer'
-        st.rerun()
+    with st.sidebar:
+        st.title("Süper Admin")
+        with st.expander(f"👤 {st.session_state.get('username', 'Yönetici')}", expanded=True):
+            if st.button("🚪 Çıkış Yap", key="sa_logout", use_container_width=True):
+                st.session_state.logged_in = False
+                st.session_state.role = 'viewer'
+                st.rerun()
     
     st.title("🏫 Okul Yönetim Paneli")
     
@@ -967,7 +974,7 @@ if st.session_state.get("role") == "super_admin":
         with col_left:
             st.subheader("Kayıtlı Okullar")
             if schools:
-                df_schools = pd.DataFrame(schools, columns=["ID", "Okul Adı", "Kullanıcı Adı"])
+                df_schools = pd.DataFrame(schools, columns=["ID", "Okul Adı", "Kullanıcı Adı", "Şifre"])
                 st.dataframe(df_schools, use_container_width=True, hide_index=True)
             else:
                 st.info("Henüz kayıtlı okul bulunmamaktadır.")
@@ -1120,15 +1127,39 @@ if 'vice_principals' not in st.session_state:
     st.session_state.vice_principals = saved_data.get('vice_principals', {})
 
 # --- Yan Menü ---
-panel_title = f"Panel ({st.session_state.get('role', 'user')})"
-if st.session_state.get('school_name'):
-    panel_title += f"\n🏫 {st.session_state.school_name}"
+with st.sidebar:
+    st.title("Panel")
+    with st.expander(f"👤 {st.session_state.get('username', 'Kullanıcı')}", expanded=True):
+        st.caption(f"Rol: {st.session_state.get('role', 'user')}")
+        if st.session_state.get('school_name'):
+            st.caption(f"🏫 {st.session_state.school_name}")
+        
+        # Şifre Değiştirme (Sadece Okul Yöneticileri için)
+        if st.session_state.get('role') == 'admin' and st.session_state.get('school_id'):
+            if st.checkbox("🔑 Şifre Değiştir", key="chk_change_pwd"):
+                with st.form("pwd_change_form"):
+                    cur_p = st.text_input("Mevcut Şifre", type="password")
+                    new_p = st.text_input("Yeni Şifre", type="password")
+                    conf_p = st.text_input("Yeni Şifre (Tekrar)", type="password")
+                    
+                    if st.form_submit_button("Güncelle"):
+                        user_check = verify_school_user(st.session_state.username, cur_p)
+                        if user_check:
+                            if new_p and new_p == conf_p:
+                                success, msg = update_school(st.session_state.school_id, st.session_state.school_name, st.session_state.username, new_p)
+                                if success:
+                                    st.success("Şifre güncellendi!")
+                                else:
+                                    st.error(msg)
+                            else:
+                                st.error("Yeni şifreler eşleşmiyor.")
+                        else:
+                            st.error("Mevcut şifre hatalı.")
 
-st.sidebar.title(panel_title)
-if st.sidebar.button("🚪 Çıkış Yap"):
-    st.session_state.logged_in = False
-    st.session_state.role = 'viewer'
-    st.rerun()
+        if st.button("🚪 Çıkış Yap", key="logout_btn", use_container_width=True):
+            st.session_state.logged_in = False
+            st.session_state.role = 'viewer'
+            st.rerun()
 
 if st.session_state.get("role") == "admin":
     if st.sidebar.button("💾 Tüm Verileri Kaydet"):
